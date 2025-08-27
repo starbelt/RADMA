@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 include_directories(coralmicro)
-add_subdirectory(coralmicro-out-of-tree-sample)
+add_subdirectory(coralmicro)
 
 add_executable_m7(coralmicro-app
         main.cc
