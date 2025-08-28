@@ -30,18 +30,18 @@ extern "C" [[noreturn]] void app_main(void *param) {
 
 #include <vector>
 
-#include "libs/base/filesystem.h"
-#include "libs/base/led.h"
-#include "libs/camera/camera.h"
-#include "libs/tensorflow/detection.h"
-#include "libs/tensorflow/utils.h"
-#include "libs/tpu/edgetpu_manager.h"
-#include "libs/tpu/edgetpu_op.h"
-#include "third_party/freertos_kernel/include/FreeRTOS.h"
-#include "third_party/freertos_kernel/include/task.h"
-#include "third_party/tflite-micro/tensorflow/lite/micro/micro_error_reporter.h"
-#include "third_party/tflite-micro/tensorflow/lite/micro/micro_interpreter.h"
-#include "third_party/tflite-micro/tensorflow/lite/micro/micro_mutable_op_resolver.h"
+#include "coralmicro/libs/base/filesystem.h"
+#include "coralmicro/libs/base/led.h"
+#include "coralmicro/libs/camera/camera.h"
+#include "coralmicro/libs/tensorflow/detection.h"
+#include "coralmicro/libs/tensorflow/utils.h"
+#include "coralmicro/libs/tpu/edgetpu_manager.h"
+#include "coralmicro/libs/tpu/edgetpu_op.h"
+#include "coralmicro/third_party/freertos_kernel/include/FreeRTOS.h"
+#include "coralmicro/third_party/freertos_kernel/include/task.h"
+#include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_error_reporter.h"
+#include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_interpreter.h"
+#include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_mutable_op_resolver.h"
 
 // Runs face detection on the Edge TPU, using the on-board camera, printing
 //  results to the serial console and turning on the User LED when a face
@@ -54,7 +54,7 @@ extern "C" [[noreturn]] void app_main(void *param) {
 namespace coralmicro {
 namespace {
 constexpr char kModelPath[] =
-    "/models/ssd_mobilenet_v2_face_quant_postprocess_edgetpu.tflite";
+    "coralmicro/models/ssd_mobilenet_v2_face_quant_postprocess_edgetpu.tflite";
 constexpr int kTopK = 5;
 constexpr float kThreshold = 0.5;
 
@@ -126,11 +126,11 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
       vTaskSuspend(nullptr);
     }
     // end time
-    TickType_t end_tick = xTaskGetTickCount();
     TickType_t diff = xTaskGetTickCount() - start_tick;
 
     //serial print
-    printf("Inference time: %d\r\n", diff);
+    printf("Inference time: %lu\r\n", diff);
+
     if (auto results =
             tensorflow::GetDetectionResults(&interpreter, kThreshold, kTopK);
         !results.empty()) {
