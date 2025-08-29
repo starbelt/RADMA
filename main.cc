@@ -64,7 +64,7 @@ constexpr int kTensorArenaSize = 8 * 1024 * 1024;
 STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
 [[noreturn]] void Main() {
-  printf("Face Detection Example!\r\n");
+  printf("Model Latency Tracing\r\n");
   // Turn on Status LED to show the board is on.
   LedSet(Led::kStatus, true);
 
@@ -107,14 +107,16 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
   int model_height = input_tensor->dims->data[1];
   int model_width = input_tensor->dims->data[2];
 
-  // Initialize GPIO pin to be traced by Logic Analyzer
+  // Initialize UART-CTS pin as GPIO pin to be traced by Logic Analyzer
   coralmicro::GpioSetMode(coralmicro::kUartCts,coralmicro::GpioMode::kOutput);
 
   // DWT cycle counter
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CYCCNT = 0;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
   while (true) {
+
     CameraFrameFormat fmt{CameraFormat::kRgb,
                           CameraFilterMethod::kBilinear,
                           CameraRotation::k270,
@@ -122,27 +124,39 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
                           model_height,
                           false,
                           tflite::GetTensorData<uint8_t>(input_tensor)};
+
     if (!CameraTask::GetSingleton()->GetFrame({fmt})) {
       printf("Failed to capture image\r\n");
       vTaskSuspend(nullptr);
     }
 
     // Start time
+    uint32_t t_before_set = DWT->CYCCNT;
     coralmicro::GpioSet(coralmicro::kUartCts, true); // Throw HIGH
-    TickType_t start_tick = xTaskGetTickCount(); // Check Time Since Start
+    // TickType_t start_tick = xTaskGetTickCount(); // Check Time Since Start
 
-    uint32_t start = DWT->CYCCNT;
+    __DSB(); __ISB();  // ensure visibility
+    uint32_t t_after_set = DWT->CYCCNT;
 
+
+    uint32_t t_start = DWT->CYCCNT;
     if (interpreter.Invoke() != kTfLiteOk) {
       printf("Failed to invoke\r\n");
       vTaskSuspend(nullptr);
     }
+    uint32_t t_end = DWT->CYCCNT;
+
     // end time
     coralmicro::GpioSet(coralmicro::kUartCts, false); // Throw LOW
-    TickType_t diff = xTaskGetTickCount() - start_tick; // Time since last check
-    uint32_t stop = DWT->CYCCNT;
-    uint32_t cycles = stop - start;
-    float ms = cycles / (600000000.0 / 1000.0); // if MCU = 600 MHz
+    uint32_t t_after_clear = DWT->CYCCNT;
+    // TickType_t diff = xTaskGetTickCount() - start_tick; // Time since last check
+
+    printf("set_us=%f, invoke_us=%f, total_us=%f\r\n",
+      (t_after_set - t_before_set) / (600000000.0 / 1000.0),
+      (t_end - t_start) / (600000000.0 / 1000.0),
+      (t_after_clear - t_before_set) / (600000000.0 / 1000.0)
+      ); // MCU = 600 MHz
+
 
     // print to serial
     printf("Inference Latency (RTOS): %lu ms\r\n", diff);
@@ -151,7 +165,7 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
     if (auto results =
             tensorflow::GetDetectionResults(&interpreter, kThreshold, kTopK);
         !results.empty()) {
-      printf("Found %d face(s):\r\n%s\r\n", results.size(),
+      printf("Found %d result:\r\n%s\r\n", results.size(),
              tensorflow::FormatDetectionOutput(results).c_str());
       LedSet(Led::kUser, true);
     } else {
