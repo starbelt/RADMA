@@ -57,9 +57,9 @@ def count_tflite_params(model_path):
 
 class Param_Counts:
     def __init__(self, dir, verbose=False):
-        self.dir = dir
+        self.dir = os.path.expanduser(dir)
         self.verbose = verbose
-
+        print(self.dir)
     def scan_models(self):
         """
         Traverse self.dir, find subdirectories containing 'CPU_ref', and count parameters

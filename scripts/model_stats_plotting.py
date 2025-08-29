@@ -4,7 +4,10 @@ from Param_Counts import Param_Counts
 
 def img_class_plt(sheet):
     """Triple Stacked Bar Chart of Model Stats for Image Classification Models"""
-    pc = Param_Counts("/home/jackr/Coral-TPU-Characterization/models/Image_Classification")
+
+    model_dir = "~/Coral-TPU-Characterization/models/Image_Classification"
+    pc = Param_Counts(model_dir)
+
     param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
 
     ic_df = pd.read_excel(

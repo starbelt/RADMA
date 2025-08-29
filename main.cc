@@ -42,6 +42,7 @@ extern "C" [[noreturn]] void app_main(void *param) {
 #include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_error_reporter.h"
 #include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_interpreter.h"
 #include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_mutable_op_resolver.h"
+#include "coralmicro/libs/base/gpio.h"
 
 // Runs face detection on the Edge TPU, using the on-board camera, printing
 //  results to the serial console and turning on the User LED when a face
@@ -106,6 +107,13 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
   int model_height = input_tensor->dims->data[1];
   int model_width = input_tensor->dims->data[2];
 
+  // Initialize GPIO pin to be traced by Logic Analyzer
+  coralmicro::GpioSetMode(coralmicro::kUartCts,coralmicro::GpioMode::kOutput);
+
+  // DWT cycle counter
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  DWT->CYCCNT = 0;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
   while (true) {
     CameraFrameFormat fmt{CameraFormat::kRgb,
                           CameraFilterMethod::kBilinear,
@@ -118,18 +126,27 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
       printf("Failed to capture image\r\n");
       vTaskSuspend(nullptr);
     }
+
     // Start time
-    TickType_t start_tick = xTaskGetTickCount();
+    coralmicro::GpioSet(coralmicro::kUartCts, true); // Throw HIGH
+    TickType_t start_tick = xTaskGetTickCount(); // Check Time Since Start
+
+    uint32_t start = DWT->CYCCNT;
 
     if (interpreter.Invoke() != kTfLiteOk) {
       printf("Failed to invoke\r\n");
       vTaskSuspend(nullptr);
     }
     // end time
-    TickType_t diff = xTaskGetTickCount() - start_tick;
+    coralmicro::GpioSet(coralmicro::kUartCts, false); // Throw LOW
+    TickType_t diff = xTaskGetTickCount() - start_tick; // Time since last check
+    uint32_t stop = DWT->CYCCNT;
+    uint32_t cycles = stop - start;
+    float ms = cycles / (600000000.0 / 1000.0); // if MCU = 600 MHz
 
-    //serial print
-    printf("Inference time: %lu\r\n", diff);
+    // print to serial
+    printf("Inference Latency (RTOS): %lu ms\r\n", diff);
+    printf("Inference Latency (CLOCK): %.3f ms\r\n", ms);
 
     if (auto results =
             tensorflow::GetDetectionResults(&interpreter, kThreshold, kTopK);
