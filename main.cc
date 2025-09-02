@@ -1,19 +1,3 @@
-/*#include <cstdio>
-
-#include "../coralmicro/libs/base/led.h"
-#include "../coralmicro/third_party/freertos_kernel/include/FreeRTOS.h"
-#include "../coralmicro/third_party/freertos_kernel/include/task.h"
-
-extern "C" [[noreturn]] void app_main(void *param) {
-  (void)param;
-  // Turn on Status LED to show the board is on.
-  LedSet(coralmicro::Led::kStatus, true);
-
-  printf("Hello out-of-tree world!\r\n");
-  vTaskSuspend(nullptr);
-} // hmm
-*/
-
 // Copyright 2022 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,8 +16,8 @@ extern "C" [[noreturn]] void app_main(void *param) {
 
 #include "coralmicro/libs/base/filesystem.h"
 #include "coralmicro/libs/base/led.h"
-#include "coralmicro/libs/camera/camera.h"
-#include "coralmicro/libs/tensorflow/detection.h"
+// #include "coralmicro/libs/camera/camera.h"
+// #include "coralmicro/libs/tensorflow/detection.h"
 #include "coralmicro/libs/tensorflow/utils.h"
 #include "coralmicro/libs/tpu/edgetpu_manager.h"
 #include "coralmicro/libs/tpu/edgetpu_op.h"
@@ -44,13 +28,9 @@ extern "C" [[noreturn]] void app_main(void *param) {
 #include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "coralmicro/libs/base/gpio.h"
 
-// Runs face detection on the Edge TPU, using the on-board camera, printing
-//  results to the serial console and turning on the User LED when a face
-// is detected.
-//
-// To build and flash from coralmicro root:
-//    bash build.sh
-//    python3 scripts/flashtool.py -e face_detection
+enum GpioSignal {GPIO_START, GPIO_END};
+
+static QueueHandle_t gpioQueue;
 
 namespace coralmicro {
 namespace {
@@ -63,19 +43,33 @@ constexpr float kThreshold = 0.5;
 constexpr int kTensorArenaSize = 8 * 1024 * 1024;
 STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
+  // High-priority GPIO task
+  void GpioTask(void* param) {
+    GpioSignal sig;
+    while (true) {
+      if (xQueueReceive(gpioQueue, &sig, portMAX_DELAY) == pdPASS) {
+        if (sig == GPIO_START) {
+          coralmicro::GpioSet(coralmicro::kUartCts, true);
+        } else if (sig == GPIO_END) {
+          coralmicro::GpioSet(coralmicro::kUartCts, false);
+        }
+        // Data sync barrier to make sure it’s really visible
+        __DSB(); __ISB();
+      }
+    }
+  }
 
-[[noreturn]] void Main() {
+
+[[noreturn]] void InferenceTask() {
   //printf("Model Latency Tracing\r\n");
   // Turn on Status LED to show the board is on.
-  // LedSet(Led::kStatus, true);
+  LedSet(Led::kStatus, true);
 
   std::vector<uint8_t> model;
   if (!LfsReadFile(kModelPath, &model)) {
     printf("ERROR: Failed to load %s\r\n", kModelPath);
     vTaskSuspend(nullptr);
   }
-  // Make dummy gray image
-  uint8_t static_image[320*320*3] = {127};
 
   auto tpu_context = EdgeTpuManager::GetSingleton()->OpenDevice(); // initialize TPU
   if (!tpu_context) {
@@ -97,23 +91,13 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
     vTaskSuspend(nullptr);
   }
 
-  if (interpreter.inputs().size() != 1) {
-    printf("ERROR: Model must have only one input tensor\r\n");
-    vTaskSuspend(nullptr);
-  }
-
-  // Starting Camera.
-  CameraTask::GetSingleton()->SetPower(true);
-  CameraTask::GetSingleton()->Enable(CameraMode::kStreaming);
-
+  // Create a dummy image to feed into the model
   auto* input_tensor = interpreter.input_tensor(0);
-  memcpy(input->data.uint8, static_image, input->bytes);
-  int model_height = input_tensor->dims->data[1];
-  int model_width = input_tensor->dims->data[2];
+  std::vector<uint8_t> static_image(input_tensor->bytes, 127);  // fill with gray
+  memcpy(input_tensor->data.uint8, static_image.data(), input_tensor->bytes);
 
   // Initialize UART-CTS pin as GPIO pin to be traced by Logic Analyzer
   coralmicro::GpioSetMode(coralmicro::kUartCts,coralmicro::GpioMode::kOutput);
-  // coralmicro::GpioSetMode(coralmicro::Gpio::kUartRts, coralmicro::GpioMode::kOutput);
 
   // DWT cycle counter
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
@@ -121,37 +105,15 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
   while (true) {
-
-    CameraFrameFormat fmt{CameraFormat::kRgb,
-                          CameraFilterMethod::kBilinear,
-                          CameraRotation::k270,
-                          model_width,
-                          model_height,
-                          false,
-                          tflite::GetTensorData<uint8_t>(input_tensor)};
-
-    if (!CameraTask::GetSingleton()->GetFrame({fmt})) {
-      printf("Failed to capture image\r\n");
-      vTaskSuspend(nullptr);
-    }
-
     // Test Salaea with RTS pin - results in ~1.3 microseconds total delay
-    coralmicro::GpioSet(kUartRts, true);
-    uint32_t t_rts0 = DWT->CYCCNT;
-    __DSB(); __ISB();
-    volatile bool rbtest = coralmicro::GpioGet(coralmicro::kUartRts); (void)rbtest;
-    coralmicro::GpioSet(coralmicro::kUartRts, false);
-    uint32_t t_rts1 = DWT->CYCCNT;
-    printf("Salaea Test Comparison: %f ms",(t_rts1-t_rts0)/((800000000.0 / 1000.0)));
-
+    // I don't think this would account for the ~20ms delay observed.
 
     // Start time
-    coralmicro::GpioSet(coralmicro::kUartCts, true); // Throw HIGH for Saleae
-    __DSB(); __ISB();  // ensure visibility
-    volatile bool rb = coralmicro::GpioGet(coralmicro::kUartCts);
-    (void)rb;
+    GpioSignal start = GPIO_START;
+    xQueueSend(gpioQueue, &start, 0);
 
     const uint32_t t_start = DWT->CYCCNT; // Check Cycles before Invoke
+    // Call for inference
     if (interpreter.Invoke() != kTfLiteOk) {
       printf("Failed to invoke\r\n");
       vTaskSuspend(nullptr);
@@ -159,31 +121,21 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
     const uint32_t t_end = DWT->CYCCNT; // Check Cycles after Invoke
 
     // End time
-    coralmicro::GpioSet(coralmicro::kUartCts, false); // Throw LOW for Saleae
-    __DSB(); __ISB();
-    volatile bool rb2 = coralmicro::GpioGet(coralmicro::kUartCts); (void)rb2;
+    GpioSignal end = GPIO_END;
+    xQueueSend(gpioQueue, &end,0);
 
     printf("invoke_ms=%f\r\n",
-      (t_end - t_start) / (800000000.0 / 1000.0) // Calculate time from Cycles
+      (t_end - t_start) / (800000000.0 / 1000.0) // calculate time from cycles
       ); // MCU = 800 MHz as per coral datasheet
 
-
-    if (auto results =
-            tensorflow::GetDetectionResults(&interpreter, kThreshold, kTopK);
-        !results.empty()) {
-      printf("Found %d result:\r\n%s\r\n", results.size(),
-             tensorflow::FormatDetectionOutput(results).c_str());
-      LedSet(Led::kUser, true);
-    } else {
-      LedSet(Led::kUser, false);
-    }
   }
 }
 
 }  // namespace
 }  // namespace coralmicro
 
-extern "C" void app_main(void* param) {
-  (void)param;
-  coralmicro::Main();
+extern "C" void app_main() {
+  gpioQueue = xQueueCreate(4,sizeof(GpioSignal));
+  xTaskCreate(GpioTask, "GpioTask", 2048, nullptr, configMAX_PRIORITIES-1, nullptr);
+  xTaskCreate(InferenceTask, "InferenceTask", 8192, nullptr, configMAX_PRIORITIES-2, nullptr);
 }
