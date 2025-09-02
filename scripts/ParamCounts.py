@@ -55,7 +55,7 @@ def count_tflite_params(model_path):
 
     return total_params
 
-class Param_Counts:
+class ParamCounts:
     def __init__(self, dir, verbose=False):
         self.dir = os.path.expanduser(dir)
         self.verbose = verbose

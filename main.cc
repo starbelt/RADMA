@@ -63,16 +63,19 @@ constexpr float kThreshold = 0.5;
 constexpr int kTensorArenaSize = 8 * 1024 * 1024;
 STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
+
 [[noreturn]] void Main() {
-  printf("Model Latency Tracing\r\n");
+  //printf("Model Latency Tracing\r\n");
   // Turn on Status LED to show the board is on.
-  LedSet(Led::kStatus, true);
+  // LedSet(Led::kStatus, true);
 
   std::vector<uint8_t> model;
   if (!LfsReadFile(kModelPath, &model)) {
     printf("ERROR: Failed to load %s\r\n", kModelPath);
     vTaskSuspend(nullptr);
   }
+  // Make dummy gray image
+  uint8_t static_image[320*320*3] = {127};
 
   auto tpu_context = EdgeTpuManager::GetSingleton()->OpenDevice(); // initialize TPU
   if (!tpu_context) {
@@ -104,11 +107,13 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
   CameraTask::GetSingleton()->Enable(CameraMode::kStreaming);
 
   auto* input_tensor = interpreter.input_tensor(0);
+  memcpy(input->data.uint8, static_image, input->bytes);
   int model_height = input_tensor->dims->data[1];
   int model_width = input_tensor->dims->data[2];
 
   // Initialize UART-CTS pin as GPIO pin to be traced by Logic Analyzer
   coralmicro::GpioSetMode(coralmicro::kUartCts,coralmicro::GpioMode::kOutput);
+  // coralmicro::GpioSetMode(coralmicro::Gpio::kUartRts, coralmicro::GpioMode::kOutput);
 
   // DWT cycle counter
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
@@ -130,37 +135,38 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
       vTaskSuspend(nullptr);
     }
 
+    // Test Salaea with RTS pin - results in ~1.3 microseconds total delay
+    coralmicro::GpioSet(kUartRts, true);
+    uint32_t t_rts0 = DWT->CYCCNT;
+    __DSB(); __ISB();
+    volatile bool rbtest = coralmicro::GpioGet(coralmicro::kUartRts); (void)rbtest;
+    coralmicro::GpioSet(coralmicro::kUartRts, false);
+    uint32_t t_rts1 = DWT->CYCCNT;
+    printf("Salaea Test Comparison: %f ms",(t_rts1-t_rts0)/((800000000.0 / 1000.0)));
+
+
     // Start time
-    uint32_t t_before_set = DWT->CYCCNT;
-    coralmicro::GpioSet(coralmicro::kUartCts, true); // Throw HIGH
-    // TickType_t start_tick = xTaskGetTickCount(); // Check Time Since Start
-
+    coralmicro::GpioSet(coralmicro::kUartCts, true); // Throw HIGH for Saleae
     __DSB(); __ISB();  // ensure visibility
-    uint32_t t_after_set = DWT->CYCCNT;
+    volatile bool rb = coralmicro::GpioGet(coralmicro::kUartCts);
+    (void)rb;
 
-
-    uint32_t t_start = DWT->CYCCNT;
+    const uint32_t t_start = DWT->CYCCNT; // Check Cycles before Invoke
     if (interpreter.Invoke() != kTfLiteOk) {
       printf("Failed to invoke\r\n");
       vTaskSuspend(nullptr);
     }
-    uint32_t t_end = DWT->CYCCNT;
+    const uint32_t t_end = DWT->CYCCNT; // Check Cycles after Invoke
 
-    // end time
-    coralmicro::GpioSet(coralmicro::kUartCts, false); // Throw LOW
-    uint32_t t_after_clear = DWT->CYCCNT;
-    // TickType_t diff = xTaskGetTickCount() - start_tick; // Time since last check
+    // End time
+    coralmicro::GpioSet(coralmicro::kUartCts, false); // Throw LOW for Saleae
+    __DSB(); __ISB();
+    volatile bool rb2 = coralmicro::GpioGet(coralmicro::kUartCts); (void)rb2;
 
-    printf("set_us=%f, invoke_us=%f, total_us=%f\r\n",
-      (t_after_set - t_before_set) / (600000000.0 / 1000.0),
-      (t_end - t_start) / (600000000.0 / 1000.0),
-      (t_after_clear - t_before_set) / (600000000.0 / 1000.0)
-      ); // MCU = 600 MHz
+    printf("invoke_ms=%f\r\n",
+      (t_end - t_start) / (800000000.0 / 1000.0) // Calculate time from Cycles
+      ); // MCU = 800 MHz as per coral datasheet
 
-
-    // print to serial
-    printf("Inference Latency (RTOS): %lu ms\r\n", diff);
-    printf("Inference Latency (CLOCK): %.3f ms\r\n", ms);
 
     if (auto results =
             tensorflow::GetDetectionResults(&interpreter, kThreshold, kTopK);
