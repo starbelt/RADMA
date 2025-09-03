@@ -17,40 +17,23 @@
 namespace coralmicro {
 namespace {
 // Path to model inside the image
-constexpr char kModelPath[] =
-    "models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite";
+constexpr char kModelPath[] ="models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite";
 
 // Tensor arena (preallocated in SDRAM)
-constexpr int kTensorArenaSize = 12 * 1024 * 1024;
+constexpr int kTensorArenaSize = 10 * 1024 * 1024;
 STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
-// task handle for GPIO task
-TaskHandle_t gpioTaskHandle = nullptr;
-TaskHandle_t inferenceTaskHandle = nullptr;
-
-// GPIO task (highest priority)
-[[noreturn]] void GpioTask(void* pvParameters) {
-  GpioSetMode(kUartCts, GpioMode::kOutput); // uses CTS pin (left of camera)
+  TaskHandle_t h = nullptr;
+// Inference task (single task handles GPIO and inference)
+[[noreturn]] void InferenceTask(void* pvParameters) {
+  LedSet(Led::kStatus, true);
+  printf("1\n");
+  // Setup GPIO pin
+  GpioSetMode(kUartCts, GpioMode::kOutput);
   GpioSet(kUartCts, false);
   __DSB(); __ISB();
 
-  for (;;) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    GpioSet(kUartCts, true);
-    __DSB(); __ISB();
-    xTaskNotifyGive(inferenceTaskHandle); // notify the inference task
-
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    GpioSet(kUartCts, false);
-    __DSB(); __ISB();
-    xTaskNotifyGive(inferenceTaskHandle); // notify the inference task
-  }
-}
-
-// Inference task (lower priority)
-[[noreturn]] void InferenceTask(void* pvParameters) {
-  LedSet(Led::kStatus, true); // easy "on" check
-
+  // Load model
   std::vector<uint8_t> model;
   if (!LfsReadFile(kModelPath, &model)) {
     printf("ERROR: Failed to load %s\r\n", kModelPath);
@@ -63,11 +46,12 @@ TaskHandle_t inferenceTaskHandle = nullptr;
     printf("ERROR: Failed to get EdgeTpu context\r\n");
     vTaskSuspend(nullptr);
   }
- // tflite setup
+
+  // tflite setup
   tflite::MicroErrorReporter error_reporter;
   tflite::MicroMutableOpResolver<3> resolver;
   resolver.AddDequantize();
-  resolver.AddDetectionPostprocess();
+  // resolver.AddDetectionPostprocess();
   resolver.AddCustom(kCustomOp, RegisterCustomOp());
 
   tflite::MicroInterpreter interpreter(
@@ -78,7 +62,8 @@ TaskHandle_t inferenceTaskHandle = nullptr;
     printf("ERROR: AllocateTensors() failed\r\n");
     vTaskSuspend(nullptr);
   }
-  // generate and fill a static grey image
+
+  // Fill a static input
   auto* input_tensor = interpreter.input_tensor(0);
   std::vector<uint8_t> static_image(input_tensor->bytes, 127);
   memcpy(input_tensor->data.uint8, static_image.data(), input_tensor->bytes);
@@ -89,20 +74,24 @@ TaskHandle_t inferenceTaskHandle = nullptr;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
   for (;;) {
+    // Start timing & toggle GPIO HIGH
     const uint32_t t_start = DWT->CYCCNT;
-    xTaskNotifyGive(gpioTaskHandle); // tell GpioTask to go HIGH
-    taskYIELD();
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // wait until HIGH has been set
-    if (interpreter.Invoke()!=kTfLiteOk) {
+    GpioSet(kUartCts, true);
+    __DSB(); __ISB();
+
+    if (interpreter.Invoke() != kTfLiteOk) {
       printf("ERROR: InferenceTask() failed\r\n");
       vTaskSuspend(nullptr);
-    };
-    xTaskNotifyGive(gpioTaskHandle); // tell GpioTask to go LOW
-    taskYIELD();
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // wait until LOW has been set
+    }
+
+    // Toggle GPIO LOW & end timing
+    GpioSet(kUartCts, false);
+    __DSB(); __ISB();
     const uint32_t t_end = DWT->CYCCNT;
-#if defined(SystemCoreClock) // uses SystemCoreClock if its available, or default to value in coral datasheet
+
+#if defined(SystemCoreClock)
     const double cpu_hz = static_cast<double>(SystemCoreClock);
+    printf("%d",cpu_hz)
 #else
     const double cpu_hz = 800e6;
 #endif
@@ -113,14 +102,20 @@ TaskHandle_t inferenceTaskHandle = nullptr;
   }
 }
 
-//  Create FreeRTOS tasks
+// Main creates the single task
 void Main() {
-  xTaskCreate(GpioTask, "GpioTask", 1024, nullptr, configMAX_PRIORITIES - 1,
-              &gpioTaskHandle); // max priority for minimal gpio delay
+  // quick sanity prints/LED to prove we reach Main()
+  printf("Main() entered\r\n");
+  LedSet(Led::kStatus, true);
+  vTaskDelay(pdMS_TO_TICKS(200));
+  LedSet(Led::kStatus, false);
+  vTaskDelay(pdMS_TO_TICKS(200));
+  printf("About to create InferenceTask\r\n");
 
-  xTaskCreate(InferenceTask, "InferenceTask", 8192, nullptr,
-              configMAX_PRIORITIES - 2,
-              &inferenceTaskHandle); // right after the gpio, but above all other on-board housekeeping
+  BaseType_t rc = xTaskCreate(InferenceTask, "InferenceTask", 16384, nullptr,
+              configMAX_PRIORITIES - 1, &h);
+  printf("xTaskCreate returned %ld, handle %p\r\n", (long)rc,h);
+
   vTaskSuspend(nullptr);
 }
 

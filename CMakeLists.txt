@@ -14,9 +14,9 @@ include_directories(coralmicro)
 add_subdirectory(coralmicro)
 
 add_executable_m7(coralmicro-app
-        main.cc
+        inference_time_combined.cc
         DATA
-        ${PROJECT_SOURCE_DIR}/coralmicro/models/ssd_mobilenet_v2_face_quant_postprocess_edgetpu.tflite)
+        ${PROJECT_SOURCE_DIR}/models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite)
 
 target_link_libraries(coralmicro-app
         libs_base-m7_freertos
