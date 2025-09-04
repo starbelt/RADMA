@@ -20,7 +20,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
     models = sorted(MODELS_DIR.rglob("*_edgetpu.tflite"))
 
     for model in models:
-        print(f"=== Testing {model.name} ===")
+        print(f"Testing {model.name}")
 
         # Patch header file
         with open("inference_config.h", "w") as f:

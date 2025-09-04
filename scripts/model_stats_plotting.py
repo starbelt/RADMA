@@ -52,15 +52,14 @@ def obj_det_plt(sheet):
     pc = ParamCounts(model_dir)
 
     param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
-
     ic_df = pd.read_excel(
         sheet,
         sheet_name="Obj_Det",
         header=0,
-        usecols=["Model name","Latency (ms)", "mAP"]
+        usecols=["Model Name","Latency (ms)", "mAP"]
     )
 
-    model_names = ic_df["Model name"].tolist()
+    model_names = ic_df["Model Name"].tolist()
     latency_ms = ic_df["Latency (ms)"].tolist()
     mAP = ic_df["mAP"].tolist()
 
@@ -81,10 +80,10 @@ def segmentation_plt(sheet):
         sheet,
         sheet_name="Segmentation",
         header=0,
-        usecols=["Model name","Latency (ms)"]
+        usecols=["Model Name","Latency (ms)"]
     )
 
-    model_names = ic_df["Model name"].tolist()
+    model_names = ic_df["Model Name"].tolist()
     latency_ms = ic_df["Latency (ms)"].tolist()
 
     titles = ["Parameter Count","Latency (ms)"]
@@ -95,4 +94,7 @@ def segmentation_plt(sheet):
 
 
 if __name__ == "__main__":
-    img_class_plt("scripts/Model_Stats.xlsx")
+    filename = "scripts/Model_Stats.xlsx"
+    img_class_plt(filename)
+    obj_det_plt(filename)
+    segmentation_plt(filename)

@@ -90,7 +90,6 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
     GpioSet(kUartCts, false);
     __DSB(); __ISB();
     const uint32_t t_end = DWT->CYCCNT;
-
 #if defined(SystemCoreClock)
     const double cpu_hz = static_cast<double>(SystemCoreClock);
     printf("%d",cpu_hz)
