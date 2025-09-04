@@ -79,7 +79,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
         inf_time = None
         for l in lines:
             if "invoke_ms:" in l:
-                inf_time = l.split(":")[1].strip().replace("ms", "")
+                inf_time = l.split(":")[1]
                 break
 
         # Write results

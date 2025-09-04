@@ -1,6 +1,10 @@
+import sys
+
 import matplotlib
 import pandas as pd
 import matplotlib.pyplot as plt
+from os import path
+from adjustText import adjust_text
 from ParamCounts import ParamCounts
 
 def make_figure(titles,names,values,units,filename):
@@ -12,89 +16,131 @@ def make_figure(titles,names,values,units,filename):
     for i, (title, unit, y) in enumerate(zip(titles, units, values)):
         x_pos = range(len(names))
         ax[i].bar(x_pos, y, color=colors)
-        ax[i].set_title(title)
-        ax[i].set_ylabel(unit)
+        ax[i].set_title(title,fontsize=20)
+        ax[i].set_ylabel(unit,fontsize=18)
         ax[i].set_xticks(x_pos)
-        ax[i].set_xticklabels(names, rotation=45, ha="right")
+        ax[i].set_xticklabels(names, rotation=45,fontsize=18, ha="right")
 
     plt.tight_layout()
     plt.savefig(filename, dpi=300, bbox_inches="tight")
 
-def img_class_plt(sheet):
-    """Quadruple Stacked Bar Chart of Model Stats for Image Classification Models"""
+def param_latency_scatter(names,paramcount, latency, filename):
+    cmap = matplotlib.colormaps["tab20"]
+    colors = [cmap(i) for i in range(len(names))]
 
-    model_dir = "~/Coral-TPU-Characterization/models/Image_Classification"
-    pc = ParamCounts(model_dir)
+    fig,ax = plt.subplots(figsize = (12,10))
 
-    param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
+    ax.scatter(paramcount, latency, s=100,color=colors)
+    ax.set_xlabel("Parameter count (Millions)", fontsize=18)
+    ax.set_ylabel("Latency (ms)", fontsize=18)
+    ax.set_ylabel("Latency (ms)")
 
-    ic_df = pd.read_excel(
-        sheet,
-        sheet_name="Img_Class",
-        header=0,
-        usecols=["Model name","Latency (ms)", "Top-1 Accuracy", "Top-5 Accuracy"]
+    texts = []
+    for i, name in enumerate(names):
+        texts.append(
+            ax.text(paramcount[i], latency[i], name, fontsize=12)
+        )
+
+    adjust_text(
+        texts,
+        ax=ax,
+        arrowprops=dict(arrowstyle="->", color="gray"),
+        expand=(1.2, 1.4),
+        # only_move={"points": "y", "text": "y"}
     )
 
-    model_names = ic_df["Model name"].tolist()
-    latency_ms = ic_df["Latency (ms)"].tolist()
-    top1accuracy = ic_df["Top-1 Accuracy"].tolist()
-    top5accuracy = ic_df["Top-5 Accuracy"].tolist()
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+class ModelStatsPlotting:
+    def __init__(self,xlsx,plotdir):
+        self.sheet = path.abspath(xlsx)
+        self.plotdir = path.abspath(plotdir)
+    def img_class_plt(self):
+        """Quadruple Stacked Bar Chart of Model Stats for Image Classification Models"""
 
-    titles = ["Parameter Count","Latency ", "Top-1 Accuracy", "Top-5 Accuracy"]
-    values = [param_counts, latency_ms, top1accuracy, top5accuracy]
-    units = ["# Params (M)", "ms", "%", "%"]
+        model_dir = "~/Coral-TPU-Characterization/models/Image_Classification"
+        pc = ParamCounts(model_dir)
 
-    make_figure(titles,model_names,values,units,"img_class_plot.png")
+        param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
 
-def obj_det_plt(sheet):
-    """Triple Stacked Bar Chart of Model Stats for Object Detection"""
-    model_dir = "~/Coral-TPU-Characterization/models/Object_Detection"
-    pc = ParamCounts(model_dir)
+        ic_df = pd.read_excel(
+            self.sheet,
+            sheet_name="Img_Class",
+            header=0,
+            usecols=["Model name","Latency (ms)", "Top-1 Accuracy", "Top-5 Accuracy"]
+        )
 
-    param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
-    ic_df = pd.read_excel(
-        sheet,
-        sheet_name="Obj_Det",
-        header=0,
-        usecols=["Model Name","Latency (ms)", "mAP"]
-    )
+        model_names = ic_df["Model name"].tolist()
+        latency_ms = ic_df["Latency (ms)"].tolist()
+        top1accuracy = ic_df["Top-1 Accuracy"].tolist()
+        # top5accuracy = ic_df["Top-5 Accuracy"].tolist()
 
-    model_names = ic_df["Model Name"].tolist()
-    latency_ms = ic_df["Latency (ms)"].tolist()
-    mAP = ic_df["mAP"].tolist()
+        combined = list(zip(latency_ms, model_names, param_counts, top1accuracy))
+        combined.sort(key=lambda x: x[0]) # sort by latency - fastest to slowest
 
-    titles = ["Parameter Count","Latency (ms)", "Mean Average Precision"]
-    values = [param_counts, latency_ms, mAP]
-    units = ["# Params (M)", "ms", "%"]
+        latency_ms, model_names, param_counts, top1accuracy = zip(*combined) # overwrite with sorted lists
 
-    make_figure(titles,model_names,values,units,"obj_det_plot.png")
+        titles = ["Parameter Count","Latency ", "Top-1 Accuracy"]
+        values = [param_counts, latency_ms, top1accuracy]
+        units = ["# Params (M)", "ms", "%"]
 
-def segmentation_plt(sheet):
-    """Double Stacked Bar Chart of Model Stats for Segmentation"""
-    model_dir = "~/Coral-TPU-Characterization/models/Segmentation"
+        make_figure(titles,model_names,values,units,self.plotdir+"/img_class_plot.png")
+        param_latency_scatter(model_names,param_counts,latency_ms,self.plotdir+"/img_class_sctplot.png")
 
-    pc = ParamCounts(model_dir)
-    param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
+    def obj_det_plt(self):
+        """Triple Stacked Bar Chart of Model Stats for Object Detection"""
+        model_dir = "~/Coral-TPU-Characterization/models/Object_Detection"
+        pc = ParamCounts(model_dir)
 
-    ic_df = pd.read_excel(
-        sheet,
-        sheet_name="Segmentation",
-        header=0,
-        usecols=["Model Name","Latency (ms)"]
-    )
+        param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
+        ic_df = pd.read_excel(
+            self.sheet,
+            sheet_name="Obj_Det",
+            header=0,
+            usecols=["Model Name","Latency (ms)", "mAP"]
+        )
 
-    model_names = ic_df["Model Name"].tolist()
-    latency_ms = ic_df["Latency (ms)"].tolist()
+        model_names = ic_df["Model Name"].tolist()
+        latency_ms = ic_df["Latency (ms)"].tolist()
+        mAP = ic_df["mAP"].tolist()
 
-    titles = ["Parameter Count","Latency (ms)"]
-    values = [param_counts, latency_ms]
-    units = ["# Params (M)", "ms"]
+        combined = list(zip(latency_ms, model_names, param_counts, mAP))
+        combined.sort(key=lambda x: x[0]) # sort by latency - fastest to slowest
 
-    make_figure(titles,model_names,values,units,"segmentation_plot.png")
+        latency_ms, model_names, param_counts, mAP = zip(*combined) # overwrite with sorted lists
+
+        titles = ["Parameter Count","Latency (ms)", "Mean Average Precision"]
+        values = [param_counts, latency_ms, mAP]
+        units = ["# Params (M)", "ms", "%"]
+
+        make_figure(titles,model_names,values,units,self.plotdir+"/obj_det_plot.png")
+
+    def segmentation_plt(self):
+        """Double Stacked Bar Chart of Model Stats for Segmentation"""
+        model_dir = "~/Coral-TPU-Characterization/models/Segmentation"
+
+        pc = ParamCounts(model_dir)
+        param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
+
+        ic_df = pd.read_excel(
+            self.sheet,
+            sheet_name="Segmentation",
+            header=0,
+            usecols=["Model Name","Latency (ms)"]
+        )
+
+        model_names = ic_df["Model Name"].tolist()
+        latency_ms = ic_df["Latency (ms)"].tolist()
+
+        titles = ["Parameter Count","Latency (ms)"]
+        values = [param_counts, latency_ms]
+        units = ["# Params (M)", "ms"]
+
+        make_figure(titles,model_names,values,units,self.plotdir+"/segmentation_plot.png")
 
 
 if __name__ == "__main__":
-    filename = "scripts/Model_Stats.xlsx"
-    img_class_plt(filename)
-    obj_det_plt(filename)
-    segmentation_plt(filename)
+    plots = ModelStatsPlotting("scripts/Model_Stats.xlsx","plots/")
+    plots.img_class_plt()
+    plots.obj_det_plt()
+    plots.segmentation_plt()

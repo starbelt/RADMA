@@ -1,18 +1,18 @@
 #include <vector>
 
-#include "coralmicro/libs/base/filesystem.h"
-#include "coralmicro/libs/base/led.h"
-#include "coralmicro/libs/tpu/edgetpu_manager.h"
-#include "coralmicro/libs/tpu/edgetpu_op.h"
-#include "coralmicro/libs/base/gpio.h"
+#include "../coralmicro/libs/base/filesystem.h"
+#include "../coralmicro/libs/base/led.h"
+#include "../coralmicro/libs/tpu/edgetpu_manager.h"
+#include "../coralmicro/libs/tpu/edgetpu_op.h"
+#include "../coralmicro/libs/base/gpio.h"
 
-#include "coralmicro/third_party/freertos_kernel/include/FreeRTOS.h"
-#include "coralmicro/third_party/freertos_kernel/include/task.h"
+#include "../coralmicro/third_party/freertos_kernel/include/FreeRTOS.h"
+#include "../coralmicro/third_party/freertos_kernel/include/task.h"
 
-#include "coralmicro/libs/tensorflow/utils.h"
-#include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_error_reporter.h"
-#include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_interpreter.h"
-#include "coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_mutable_op_resolver.h"
+#include "../coralmicro/libs/tensorflow/utils.h"
+#include "../coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_error_reporter.h"
+#include "../coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_interpreter.h"
+#include "../coralmicro/third_party/tflite-micro/tensorflow/lite/micro/micro_mutable_op_resolver.h"
 
 namespace coralmicro {
 namespace {
