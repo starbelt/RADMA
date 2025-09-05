@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 from saleae import automation
 
-MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Object_Detection/SSD_MobileNet_V2_Faces").expanduser()
+MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Object_Detection").expanduser()
 RESULTS_FILE = "inference_results.csv"
 
 # serial settings
@@ -14,7 +14,7 @@ def wait_for_serial(port=SERIAL_PORT, timeout=30):
     start = time.time()
     while time.time() - start < timeout:
         if pathlib.Path(port).exists():
-            print("\nSerial Connection Established to Coral\n")
+            print("Serial Connection Established to Coral\n")
             return True
         time.sleep(0.5)
     raise TimeoutError(f"Serial port {port} not found within {timeout}s")
@@ -40,23 +40,23 @@ def measure_pulses(csv_file):
 
 with open(RESULTS_FILE, "w", newline="") as csvfile:
     with automation.Manager.connect(port=10430) as manager:
-        print("1")
         writer = csv.writer(csvfile)
         writer.writerow(["model", "serial_invoke_ms", "avg_logic_ms", "saleae_dir"]) # header
-        print("3")
         # find all files ending with "_edgetpu.tflite" (recursively)
         models = sorted(MODELS_DIR.rglob("*_edgetpu.tflite"))
-        print(f"{models}")
 
         for model in models:
-            print(f"Testing {model.name}")
+            print(f"Testing {model.name}\n")
             rel_path = model.relative_to(MODELS_DIR)
-            device_path = f"/models/{rel_path.as_posix()}"
+            device_path = f"/models/Object_Detection/{rel_path.as_posix()}" ## HARDCODED-ish
             host_path = str(model.resolve())  # absolute host path
+
+            print(f"Path for Board: {device_path}\n")
+            print(f"Path for Make: {host_path}\n")
 
             # Patch header file
             with open("libs/inference_model_config.h", "w") as f:
-                f.write(f'#define MODEL_PATH "{device_path}"\n') ##### THIS PART NEEDS TO START FROM /models/
+                f.write(f'#define MODEL_PATH "{device_path}"\n')
 
             # Build & flash
             subprocess.run([
@@ -73,7 +73,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             subprocess.run([
                 "python3", "coralmicro/scripts/flashtool.py",
                 "--build_dir", "out",
-                "--elf_path", "out/coralmicro-app", "--nodata"
+                "--elf_path", "out/coralmicro-app"
             ], check=True)
 
             # Give board time to boot
@@ -81,7 +81,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             time.sleep(2)  # extra settle time
 
             # Prepare Saleae capture configs
-            print("\nPreparing Logic Analyzer\n")
+            print("Preparing Logic Analyzer\n")
             device_configuration = automation.LogicDeviceConfiguration(
                 enabled_digital_channels=[0],  # CTS GPIO on channel 0
                 digital_sample_rate=50_000_000,
@@ -92,10 +92,11 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             )
 
             # Create output directory per model (or perhaps not)
-            print("\nPreparing Output Directory\n")
+            print("Preparing Output Directories\n")
             ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             out_dir = pathlib.Path(f"captures/{model.stem}_{ts}")
             out_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Directory Created: {out_dir}")
 
             # Folder for Saleae (grr)
             saleae_dir = out_dir / "saleae_raw"
@@ -104,17 +105,15 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
 
 
             # Run Saleae capture
-            test_file = saleae_dir / "test.txt"
-            test_file.write_text("Saleae test access")
 
-            print("\nRunning Capture\n")
+            print("Running Capture\n")
             with manager.start_capture(
                     device_id='C7495E5575CEA129',
                     device_configuration=device_configuration,
                     capture_configuration=capture_configuration) as capture:
                 # wait for timed capture (2 seconds)
                 capture.wait()
-
+                print("Creating digital.csv")
                 capture.export_raw_data_csv(
                     directory=str(saleae_dir.resolve()),
                     digital_channels=[0]
@@ -140,7 +139,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             #         break
 
             # Measure pulses
-            print("\nMeasuring Inference Time\n")
+            print("Measuring Inference Time\n")
             raw_csv = out_dir / "digital.csv"  # Saleae names file "digital.csv"
             avg_logic = None
             if raw_csv.exists():
@@ -149,4 +148,5 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             # Write results
             writer.writerow([model.name, avg_logic, str(out_dir)])
             print(f"\nMeasurements written to {out_dir}\n")
+            print("\n------Parsing to new Model------\n")
 
