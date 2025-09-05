@@ -1,6 +1,6 @@
 #include <vector>
 
-#include "inference_model_config.h"
+#include "libs/inference_model_config.h"
 
 #include "coralmicro/libs/base/filesystem.h"
 #include "coralmicro/libs/base/led.h"
@@ -22,10 +22,11 @@ namespace {
 constexpr char kModelPath[] = MODEL_PATH;
 
 // Tensor arena (preallocated in SDRAM)
-constexpr int kTensorArenaSize = 10 * 1024 * 1024;
+constexpr int kTensorArenaSize = 8 * 1024 * 1024;
 STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
-  TaskHandle_t h = nullptr;
+TaskHandle_t h = nullptr;
+
 // Inference task (single task handles GPIO and inference)
 [[noreturn]] void InferenceTask(void* pvParameters) {
   LedSet(Led::kStatus, true);

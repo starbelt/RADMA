@@ -50,17 +50,20 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
 
         for model in models:
             print(f"Testing {model.name}")
+            rel_path = model.relative_to(MODELS_DIR)
+            device_path = f"/models/{rel_path.as_posix()}"
+            host_path = str(model.resolve())  # absolute host path
 
             # Patch header file
             with open("libs/inference_model_config.h", "w") as f:
-                f.write(f'#define MODEL_PATH "{model}"\n')
-            print(model)
+                f.write(f'#define MODEL_PATH "{device_path}"\n') ##### THIS PART NEEDS TO START FROM /models/
+
             # Build & flash
             subprocess.run([
                 "cmake",
                 "-B", "out",
                 "-S", ".",
-                f"-DMODEL_PATH={model}"
+                f"-DMODEL_PATH={host_path}"
             ])
             subprocess.run(["make",
             "-C",
