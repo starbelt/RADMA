@@ -21,7 +21,7 @@ add_subdirectory(coralmicro)
 add_executable_m7(coralmicro-app
         inference_time_combined.cc
         DATA
-        ${CMAKE_CURRENT_LIST_DIR}/models/Object_Detection/SSD_MobileNet_V2_Faces/ssd_mobilenet_v2_face_quant_postprocess_edgetpu.tflite)
+        ${CMAKE_CURRENT_LIST_DIR}/models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite)
 # NEED TO RE_ADD the VARIABLE PATH BASED ON SCRIPT!!
 target_link_libraries(coralmicro-app
         libs_base-m7_freertos

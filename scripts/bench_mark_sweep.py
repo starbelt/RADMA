@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 from saleae import automation
 
-MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Object_Detection").expanduser()
+MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Image_Classification/EfficientNet/S/").expanduser()
 RESULTS_FILE = "inference_results.csv"
 
 # serial settings
@@ -48,7 +48,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
         for model in models:
             print(f"Testing {model.name}\n")
             rel_path = model.relative_to(MODELS_DIR)
-            device_path = f"/models/Object_Detection/{rel_path.as_posix()}" ## HARDCODED-ish
+            device_path = f"/models/Image_Classification/EfficientNet/S/{rel_path.as_posix()}" ## HARDCODED-ish
             host_path = str(model.resolve())  # absolute host path
 
             print(f"Path for Board: {device_path}\n")
@@ -62,8 +62,8 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             subprocess.run([
                 "cmake",
                 "-B", "out",
-                "-S", ".",
-                f"-DMODEL_PATH={host_path}"
+                "-S", "."
+               # , f"-DMODEL_PATH={host_path}"
             ])
             subprocess.run(["make",
             "-C",

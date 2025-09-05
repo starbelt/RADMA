@@ -1,7 +1,5 @@
 #include <vector>
 
-#include "libs/inference_model_config.h"
-
 #include "coralmicro/libs/base/filesystem.h"
 #include "coralmicro/libs/base/led.h"
 #include "coralmicro/libs/tpu/edgetpu_manager.h"
@@ -19,18 +17,17 @@
 namespace coralmicro {
 namespace {
 // Path to model inside the image
-constexpr char kModelPath[] = "/models/Object_Detection/SSD_MobileNet_V2_Faces/ssd_mobilenet_v2_face_quant_postprocess_edgetpu.tflite";
+constexpr char kModelPath[] ="models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite";
 
 // Tensor arena (preallocated in SDRAM)
 constexpr int kTensorArenaSize = 10 * 1024 * 1024;
 STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
-TaskHandle_t h = nullptr;
-
+  TaskHandle_t h = nullptr;
 // Inference task (single task handles GPIO and inference)
 [[noreturn]] void InferenceTask(void* pvParameters) {
   LedSet(Led::kStatus, true);
-
+  printf("1\n");
   // Setup GPIO pin
   GpioSetMode(kUartCts, GpioMode::kOutput);
   GpioSet(kUartCts, false);
@@ -49,9 +46,6 @@ TaskHandle_t h = nullptr;
     printf("ERROR: Failed to get EdgeTpu context\r\n");
     vTaskSuspend(nullptr);
   }
-  LedSet(Led::kStatus, false);
-  vTaskDelay(pdMS_TO_TICKS(200));
-  LedSet(Led::kStatus, true);
 
   // tflite setup
   tflite::MicroErrorReporter error_reporter;
@@ -80,7 +74,6 @@ TaskHandle_t h = nullptr;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
   for (;;) {
-
     // Start timing & toggle GPIO HIGH
     const uint32_t t_start = DWT->CYCCNT;
     GpioSet(kUartCts, true);
@@ -96,8 +89,14 @@ TaskHandle_t h = nullptr;
     __DSB(); __ISB();
     const uint32_t t_end = DWT->CYCCNT;
 
-    //const double ms = static_cast<double>(t_end - t_start) / (cpu_hz / 1000.0);
-    //printf("invoke_ms=%.3f\r\n", ms);
+#if defined(SystemCoreClock)
+    const double cpu_hz = static_cast<double>(SystemCoreClock);
+    printf("%d",cpu_hz)
+#else
+    const double cpu_hz = 800e6;
+#endif
+    const double ms = static_cast<double>(t_end - t_start) / (cpu_hz / 1000.0);
+    printf("invoke_ms=%.3f\r\n", ms);
 
     vTaskDelay(pdMS_TO_TICKS(200));
   }
@@ -105,7 +104,11 @@ TaskHandle_t h = nullptr;
 
 // Main creates the single task
 void Main() {
-  // quick sanity prints/LED to prove we reach Main()
+  printf("Main() entered\r\n");
+  LedSet(Led::kStatus, true);
+  vTaskDelay(pdMS_TO_TICKS(200));
+  LedSet(Led::kStatus, false);
+  vTaskDelay(pdMS_TO_TICKS(200));
   printf("About to create InferenceTask\r\n");
 
   BaseType_t rc = xTaskCreate(InferenceTask, "InferenceTask", 16384, nullptr,
