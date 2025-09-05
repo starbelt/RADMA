@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 from saleae import automation
 
-MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Image_Classification/EfficientNet/S/").expanduser()
+MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Image_Classification/EfficientNet/").expanduser()
 RESULTS_FILE = "inference_results.csv"
 
 # serial settings
@@ -63,13 +63,13 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
         for model in models:
             print(f"Testing {model.name}\n")
             rel_path = model.relative_to(MODELS_DIR)
-            device_path = f"/models/Image_Classification/EfficientNet/S/{rel_path.as_posix()}"  # for header
+            device_path = f"/models/Image_Classification/EfficientNet/{rel_path.as_posix()}"  # for header
             host_path = str(model.resolve())  # absolute host path for cmake
 
             # Patch header file
             with open("libs/inference_model_config.h", "w") as f:
                 f.write(f'#define MODEL_PATH "{device_path}"\n')
-            #
+
             # # Build & flash
             # subprocess.run([
             #     "cmake",
@@ -84,7 +84,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             # subprocess.run([
             #     "python3", "coralmicro/scripts/flashtool.py",
             #     "--build_dir", "out",
-            #     "--elf_path", "out/coralmicro-app" ,"--nodata"
+            #     "--elf_path", "out/coralmicro-app" #,"--nodata"
             # ], check=True)
 
 
@@ -104,17 +104,11 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             )
 
             # Create output directory per model (or perhaps not)
-            print("Preparing Output Directories\n")
+            # print("Preparing Output Directories\n")
             ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             out_dir = pathlib.Path(f"captures/{model.stem}_{ts}")
-            out_dir.mkdir(parents=True, exist_ok=True)
-            print(f"Directory Created: {out_dir}")
-
-            # Folder for Saleae (grr)
+            # # Folder for Saleae
             saleae_dir = out_dir / "saleae_raw"
-            saleae_dir.mkdir(parents=True, exist_ok=True)
-            assert saleae_dir.exists(), f"Saleae directory {saleae_dir} was not created successfully."
-
 
             # Run Saleae capture
 
