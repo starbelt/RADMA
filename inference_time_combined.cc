@@ -1,5 +1,6 @@
 #include <vector>
 
+#include "libs/inference_model_config.h"
 #include "coralmicro/libs/base/filesystem.h"
 #include "coralmicro/libs/base/led.h"
 #include "coralmicro/libs/tpu/edgetpu_manager.h"
@@ -16,8 +17,10 @@
 
 namespace coralmicro {
 namespace {
+
 // Path to model inside the image
-constexpr char kModelPath[] ="models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite";
+constexpr char kModelPath[] = MODEL_PATH;
+  //"models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite";
 
 // Tensor arena (preallocated in SDRAM)
 constexpr int kTensorArenaSize = 10 * 1024 * 1024;

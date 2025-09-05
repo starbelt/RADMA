@@ -6,7 +6,7 @@ if (NOT DEFINED CMAKE_TOOLCHAIN_FILE)
 endif()
 
 if (NOT DEFINED MODEL_PATH)
-    MESSAGE("MODEL NOT PARSEABLE")
+    message(FATAL_ERROR "MODEL_PATH not set! Pass -DMODEL_PATH=...")
 endif()
 
 project(Coral-TPU-Characterization)
@@ -15,14 +15,17 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 include_directories(coralmicro)
+include_directories(${CMAKE_CURRENT_LIST_DIR}/libs)
+
 
 add_subdirectory(coralmicro)
 
 add_executable_m7(coralmicro-app
         inference_time_combined.cc
         DATA
-        ${CMAKE_CURRENT_LIST_DIR}/models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite)
-# NEED TO RE_ADD the VARIABLE PATH BASED ON SCRIPT!!
+        ${MODEL_FILE}
+)
+
 target_link_libraries(coralmicro-app
         libs_base-m7_freertos
 )

@@ -1,4 +1,6 @@
 import os, subprocess, time, serial, csv, pathlib
+
+import numpy as np
 import pandas as pd
 from datetime import datetime
 from saleae import automation
@@ -22,21 +24,34 @@ def wait_for_serial(port=SERIAL_PORT, timeout=30):
 def measure_pulses(csv_file):
     """Parse csv for model inf time data and return average high pulse width in ms"""
     df =pd.read_csv(csv_file)
-    t = df["Time [s]"].to_numpy() #time (seconds)
-    d = df["Channel 0"].to_numpy() # digital output (0 or 1)
+    t = df["Time [s]"].astype(float).to_numpy() #time (seconds)
+    d = df["Channel 0"].astype(float).to_numpy() # digital output (0 or 1)
 
-    if len(d)==0:
+
+    if len(d) == 0:
         raise Exception("No data found")
 
-    rising = t[1:][(d[1:]==1) & (d[:-1]==0)] # 0 to the left, 1 to the right
-    falling = t[1:][(d[1:]==0) & (d[:-1]==1)]
+    rising_idx = np.where((d[1:] == 1) & (d[:-1] == 0))[0] + 1
+    falling_idx = np.where((d[1:] == 0) & (d[:-1] == 1))[0] + 1
+
+    rising = t[rising_idx]
+    falling = t[falling_idx]
+
+    # Align edges
+    if len(rising) == 0 or len(falling) == 0:
+        print("No valid edges found")
+        return None
+    if falling[0] < rising[0]:
+        falling = falling[1:]
 
     n = min(len(rising), len(falling))
     inf_time = falling[:n] - rising[:n]
 
     if len(inf_time) == 0:
+        print("You did it wrong :)")
         return None
-    return inf_time.mean() * 1000 # mean inference time in ms
+
+    return inf_time.mean() * 1000  # mean inference time in ms
 
 with open(RESULTS_FILE, "w", newline="") as csvfile:
     with automation.Manager.connect(port=10430) as manager:
@@ -48,33 +63,30 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
         for model in models:
             print(f"Testing {model.name}\n")
             rel_path = model.relative_to(MODELS_DIR)
-            device_path = f"/models/Image_Classification/EfficientNet/S/{rel_path.as_posix()}" ## HARDCODED-ish
-            host_path = str(model.resolve())  # absolute host path
-
-            print(f"Path for Board: {device_path}\n")
-            print(f"Path for Make: {host_path}\n")
+            device_path = f"/models/Image_Classification/EfficientNet/S/{rel_path.as_posix()}"  # for header
+            host_path = str(model.resolve())  # absolute host path for cmake
 
             # Patch header file
             with open("libs/inference_model_config.h", "w") as f:
                 f.write(f'#define MODEL_PATH "{device_path}"\n')
+            #
+            # # Build & flash
+            # subprocess.run([
+            #     "cmake",
+            #     "-B", "out",
+            #     "-S", ".",
+            #     f"-DMODEL_PATH={host_path}"
+            # ], check=True)
+            #
+            # subprocess.run(["make", "-C",
+            #     "out", "-j12"], check=True)
+            #
+            # subprocess.run([
+            #     "python3", "coralmicro/scripts/flashtool.py",
+            #     "--build_dir", "out",
+            #     "--elf_path", "out/coralmicro-app" ,"--nodata"
+            # ], check=True)
 
-            # Build & flash
-            subprocess.run([
-                "cmake",
-                "-B", "out",
-                "-S", "."
-               # , f"-DMODEL_PATH={host_path}"
-            ])
-            subprocess.run(["make",
-            "-C",
-            "out",
-            "-j12"
-            ], check=True)
-            subprocess.run([
-                "python3", "coralmicro/scripts/flashtool.py",
-                "--build_dir", "out",
-                "--elf_path", "out/coralmicro-app"
-            ], check=True)
 
             # Give board time to boot
             wait_for_serial(SERIAL_PORT, timeout=30)
@@ -84,7 +96,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             print("Preparing Logic Analyzer\n")
             device_configuration = automation.LogicDeviceConfiguration(
                 enabled_digital_channels=[0],  # CTS GPIO on channel 0
-                digital_sample_rate=50_000_000,
+                digital_sample_rate=100_000_000,
                 digital_threshold_volts=3.3
             )
             capture_configuration = automation.CaptureConfiguration(
@@ -140,7 +152,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
 
             # Measure pulses
             print("Measuring Inference Time\n")
-            raw_csv = out_dir / "digital.csv"  # Saleae names file "digital.csv"
+            raw_csv = saleae_dir / "digital.csv"  # Saleae names file "digital.csv"
             avg_logic = None
             if raw_csv.exists():
                 avg_logic = measure_pulses(raw_csv)
