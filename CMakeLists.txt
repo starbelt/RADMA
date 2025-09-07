@@ -23,7 +23,7 @@ add_subdirectory(coralmicro)
 add_executable_m7(coralmicro-app
         inference_time_combined.cc
         DATA
-        ${MODEL_FILE}
+        ${MODEL_PATH}
 )
 
 target_link_libraries(coralmicro-app

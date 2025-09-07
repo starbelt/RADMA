@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 from saleae import automation
 
-MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Image_Classification/EfficientNet/").expanduser()
+MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models").expanduser()
 RESULTS_FILE = "inference_results.csv"
 
 # serial settings
@@ -13,6 +13,7 @@ SERIAL_PORT = "/dev/ttyACM0"
 BAUDRATE = 115200
 
 def wait_for_serial(port=SERIAL_PORT, timeout=30):
+    """Waits until the serial port is open, or raises a timeout"""
     start = time.time()
     while time.time() - start < timeout:
         if pathlib.Path(port).exists():
@@ -63,34 +64,35 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
         for model in models:
             print(f"Testing {model.name}\n")
             rel_path = model.relative_to(MODELS_DIR)
-            device_path = f"/models/Image_Classification/EfficientNet/{rel_path.as_posix()}"  # for header
+            device_path = f"/models/{rel_path.as_posix()}"  # for header
+            print(f"Running {device_path}\n")
             host_path = str(model.resolve())  # absolute host path for cmake
-
+            print(host_path)
             # Patch header file
             with open("libs/inference_model_config.h", "w") as f:
                 f.write(f'#define MODEL_PATH "{device_path}"\n')
 
-            # # Build & flash
-            # subprocess.run([
-            #     "cmake",
-            #     "-B", "out",
-            #     "-S", ".",
-            #     f"-DMODEL_PATH={host_path}"
-            # ], check=True)
-            #
-            # subprocess.run(["make", "-C",
-            #     "out", "-j12"], check=True)
-            #
-            # subprocess.run([
-            #     "python3", "coralmicro/scripts/flashtool.py",
-            #     "--build_dir", "out",
-            #     "--elf_path", "out/coralmicro-app" #,"--nodata"
-            # ], check=True)
+            # Build & flash
+            subprocess.run([
+                "cmake",
+                "-B", "out",
+                "-S", ".",
+                f"-DMODEL_PATH={host_path}"
+            ], check=True)
+
+            subprocess.run(["make", "-C",
+                "out", "-j12"], check=True)
+
+            subprocess.run([
+                "python3", "coralmicro/scripts/flashtool.py",
+                "--build_dir", "out",
+                "--elf_path", "out/coralmicro-app" #,"--nodata"
+            ], check=True)
 
 
             # Give board time to boot
             wait_for_serial(SERIAL_PORT, timeout=30)
-            time.sleep(2)  # extra settle time
+            time.sleep(30)  # extra settle time for TPU context
 
             # Prepare Saleae capture configs
             print("Preparing Logic Analyzer\n")
