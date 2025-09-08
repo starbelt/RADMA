@@ -7,6 +7,14 @@ from os import path
 from adjustText import adjust_text
 from ParamCounts import ParamCounts
 
+def read_inf_times(file):
+    # convert csv to data frame
+    df =pd.read_csv(file)
+    model = df["model"].astype(str).to_numpy() # model file name
+    time = df["avg_logic_ms"].astype(float).to_numpy() # average inference time output from logic analyzer
+    path = df["model_dir"].astype(str).to_numpy()
+
+
 def make_figure(titles,names,values,units,filename):
     cmap = matplotlib.colormaps["tab20"]
     colors = [cmap(i) for i in range(len(names))]
@@ -55,12 +63,13 @@ class ModelStatsPlotting:
     def __init__(self,xlsx,plotdir):
         self.sheet = path.abspath(xlsx)
         self.plotdir = path.abspath(plotdir)
+
     def img_class_plt(self):
         """Quadruple Stacked Bar Chart of Model Stats for Image Classification Models"""
 
         model_dir = "~/Coral-TPU-Characterization/models/Image_Classification"
         pc = ParamCounts(model_dir)
-
+        inf_real = "Image_Classufication_inference_results.csv"
         param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
 
         ic_df = pd.read_excel(

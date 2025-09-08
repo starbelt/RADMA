@@ -57,7 +57,7 @@ def measure_pulses(csv_file):
 with open(RESULTS_FILE, "w", newline="") as csvfile:
     with automation.Manager.connect(port=10430) as manager:
         writer = csv.writer(csvfile)
-        writer.writerow(["model", "serial_invoke_ms", "avg_logic_ms", "saleae_dir"]) # header
+        writer.writerow(["model", "avg_logic_ms", "category"]) # header
         # find all files ending with "_edgetpu.tflite" (recursively)
         models = sorted(MODELS_DIR.rglob("*_edgetpu.tflite"))
 
@@ -71,6 +71,8 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             # Patch header file
             with open("libs/inference_model_config.h", "w") as f:
                 f.write(f'#define MODEL_PATH "{device_path}"\n')
+            category = model.relative_to(MODELS_DIR).parts[0]
+            print(category)
 
             # Build & flash
             subprocess.run([
@@ -154,7 +156,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
                 avg_logic = measure_pulses(raw_csv)
 
             # Write results
-            writer.writerow([model.name, avg_logic, str(out_dir)])
+            writer.writerow([model.name, avg_logic, category])
             print(f"\nMeasurements written to {out_dir}\n")
             print("\n------Parsing to new Model------\n")
 
