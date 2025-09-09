@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 from saleae import automation
 
-MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models").expanduser()
+MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Image_Classification").expanduser()
 RESULTS_FILE = "inference_results.csv"
 
 # serial settings
@@ -64,7 +64,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
         for model in models:
             print(f"Testing {model.name}\n")
             rel_path = model.relative_to(MODELS_DIR)
-            device_path = f"/models/{rel_path.as_posix()}"  # for header
+            device_path = f"/models/Image_Classification/{rel_path.as_posix()}"  # for header
             print(f"Running {device_path}\n")
             host_path = str(model.resolve())  # absolute host path for cmake
             print(host_path)
@@ -90,7 +90,6 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
                 "--build_dir", "out",
                 "--elf_path", "out/coralmicro-app" #,"--nodata"
             ], check=True)
-
 
             # Give board time to boot
             wait_for_serial(SERIAL_PORT, timeout=30)
@@ -158,5 +157,5 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
             # Write results
             writer.writerow([model.name, avg_logic, category])
             print(f"\nMeasurements written to {out_dir}\n")
-            print("\n------Parsing to new Model------\n")
+
 

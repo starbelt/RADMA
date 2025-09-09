@@ -57,7 +57,7 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
   resolver.AddDequantize();
   // resolver.AddResizeBilinear();
   // resolver.AddArgMax();
-  // resolver.AddDetectionPostprocess();
+  //resolver.AddDetectionPostprocess();
   resolver.AddCustom(kCustomOp, RegisterCustomOp());
 
   tflite::MicroInterpreter interpreter(
