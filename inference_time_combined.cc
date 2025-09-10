@@ -57,7 +57,7 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
   resolver.AddDequantize();
   // resolver.AddResizeBilinear();
   // resolver.AddArgMax();
-  //resolver.AddDetectionPostprocess();
+  resolver.AddDetectionPostprocess();
   resolver.AddCustom(kCustomOp, RegisterCustomOp());
 
   tflite::MicroInterpreter interpreter(
@@ -104,8 +104,6 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 #endif
     const double ms = static_cast<double>(t_end - t_start) / (cpu_hz / 1000.0);
     printf("invoke_ms=%.3f\r\n", ms);
-
-    vTaskDelay(pdMS_TO_TICKS(200));
   }
 }
 

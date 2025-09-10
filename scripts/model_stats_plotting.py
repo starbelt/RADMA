@@ -1,19 +1,20 @@
 import sys
 
-import matplotlib
+import matplotlib, csv, pathlib
 import pandas as pd
 import matplotlib.pyplot as plt
 from os import path
 from adjustText import adjust_text
 from ParamCounts import ParamCounts
+from saleae_parsing import measure_pulses
 
-def read_inf_times(file):
-    # convert csv to data frame
-    df =pd.read_csv(file)
-    model = df["model"].astype(str).to_numpy() # model file name
-    time = df["avg_logic_ms"].astype(float).to_numpy() # average inference time output from logic analyzer
-    path = df["model_dir"].astype(str).to_numpy()
-
+def inference_from_csvs(rundir):
+    top_dir =  pathlib.Path("captures/"+rundir).expanduser()
+    files = sorted(top_dir.rglob("*.csv"))
+    inference_time_ms = []
+    for file in files:
+        inference_time_ms.append(measure_pulses(file))
+    return inference_time_ms
 
 def make_figure(titles,names,values,units,filename):
     cmap = matplotlib.colormaps["tab20"]
@@ -69,7 +70,7 @@ class ModelStatsPlotting:
 
         model_dir = "~/Coral-TPU-Characterization/models/Image_Classification"
         pc = ParamCounts(model_dir)
-        inf_real = "Image_Classufication_inference_results.csv"
+        inf_ms = inference_from_csvs("IMG_CLASS_10s") # as measured from Saleae
         param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
 
         ic_df = pd.read_excel(
@@ -80,26 +81,48 @@ class ModelStatsPlotting:
         )
 
         model_names = ic_df["Model name"].tolist()
-        latency_ms = ic_df["Latency (ms)"].tolist()
+        latency_ms = ic_df["Latency (ms)"].tolist() # from coral docs
         top1accuracy = ic_df["Top-1 Accuracy"].tolist()
-        # top5accuracy = ic_df["Top-5 Accuracy"].tolist()
+        top5accuracy = ic_df["Top-5 Accuracy"].tolist()
 
-        combined = list(zip(latency_ms, model_names, param_counts, top1accuracy))
+        combined = list(zip(inf_ms, latency_ms,model_names, param_counts, top1accuracy))
         combined.sort(key=lambda x: x[0]) # sort by latency - fastest to slowest
+        trimmed = combined[:-2]
 
-        latency_ms, model_names, param_counts, top1accuracy = zip(*combined) # overwrite with sorted lists
+        inf_ms, latency_ms, model_names, param_counts, top1accuracy = zip(*combined) # overwrite with sorted lists
 
-        titles = ["Parameter Count","Latency ", "Top-1 Accuracy"]
-        values = [param_counts, latency_ms, top1accuracy]
-        units = ["# Params (M)", "ms", "%"]
+        updated_df = pd.DataFrame({
+            "Model name": model_names,
+            "Latency (ms)": latency_ms,  # quoted
+            "Top-1 Accuracy": top1accuracy,
+            "Top-5 Accuracy": top5accuracy,
+            "Measured Inference Time (ms)": inf_ms,  # measured
+            "Parameter Count (M)": param_counts
+        })
+
+        # Save back into Excel
+        with pd.ExcelWriter(self.sheet, mode="a", if_sheet_exists="replace", engine="openpyxl") as writer:
+            updated_df.to_excel(writer, sheet_name="Img_Class_outs", index=False)
+
+        titles = ["Parameter Count","Inference Time","Quoted Latency", "Top-1 Accuracy"]
+        values = [param_counts, inf_ms,latency_ms, top1accuracy]
+        units = ["# Params (M)", "ms", "ms", "%"]
 
         make_figure(titles,model_names,values,units,self.plotdir+"/img_class_plot.png")
         param_latency_scatter(model_names,param_counts,latency_ms,self.plotdir+"/img_class_sctplot.png")
+
+        inf_ms, latency_ms, model_names, param_counts, top1accuracy = zip(*trimmed)
+        titles = ["Parameter Count","Inference Time","Quoted Latency", "Top-1 Accuracy"]
+        values = [param_counts, inf_ms,latency_ms, top1accuracy]
+        units = ["# Params (M)", "ms", "ms", "%"]
+
+        make_figure(titles,model_names,values,units,self.plotdir+"/img_class_plot_trimmed.png")
 
     def obj_det_plt(self):
         """Triple Stacked Bar Chart of Model Stats for Object Detection"""
         model_dir = "~/Coral-TPU-Characterization/models/Object_Detection"
         pc = ParamCounts(model_dir)
+        inf_ms = inference_from_csvs("OBJ_DET_10s") # as measured from Saleae
 
         param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
         ic_df = pd.read_excel(
@@ -117,10 +140,21 @@ class ModelStatsPlotting:
         combined.sort(key=lambda x: x[0]) # sort by latency - fastest to slowest
 
         latency_ms, model_names, param_counts, mAP = zip(*combined) # overwrite with sorted lists
+        updated_df = pd.DataFrame({
+            "Model Name": model_names,
+            "Latency (ms)": latency_ms,  # quoted
+            "Measured Inference Time (ms)": inf_ms,  # measured
+            "mAP": mAP,
+            "Parameter Count (M)": param_counts
+        })
 
-        titles = ["Parameter Count","Latency (ms)", "Mean Average Precision"]
-        values = [param_counts, latency_ms, mAP]
-        units = ["# Params (M)", "ms", "%"]
+        # Save back into Excel
+        with pd.ExcelWriter(self.sheet, mode="a", if_sheet_exists="replace", engine="openpyxl") as writer:
+            updated_df.to_excel(writer, sheet_name="Obj_Det_outs", index=False)
+
+        titles = ["Parameter Count","Inference Time (ms)","Latency (ms)", "Mean Average Precision"]
+        values = [param_counts,inf_ms, latency_ms, mAP]
+        units = ["# Params (M)", "ms","ms", "%"]
 
         make_figure(titles,model_names,values,units,self.plotdir+"/obj_det_plot.png")
 
@@ -152,4 +186,4 @@ if __name__ == "__main__":
     plots = ModelStatsPlotting("scripts/Model_Stats.xlsx","plots/")
     plots.img_class_plt()
     plots.obj_det_plt()
-    plots.segmentation_plt()
+    #plots.segmentation_plt() # hiding in libs currently 090825

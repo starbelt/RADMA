@@ -6,8 +6,8 @@ import pandas as pd
 def measure_pulses(csv_file):
     """Parse csv for model inf time data and return average high pulse width in ms"""
     df =pd.read_csv(csv_file)
-    t = df["Time [s]"].astype(float).to_numpy() #time (seconds)
-    d = df["Channel 0"].astype(float).to_numpy() # digital output (0 or 1)
+    t = df["Time [s]"].astype(float).to_numpy()[1:-2] #time (seconds)
+    d = df["Channel 0"].astype(float).to_numpy() [1:-2]# digital output (0 or 1)
 
 
     if len(d) == 0:
@@ -36,7 +36,7 @@ def measure_pulses(csv_file):
     return inf_time.mean() * 1000  # mean inference time in ms
 
 if __name__ == "__main__":
-    Top_Dir =  pathlib.Path("captures/IMG_CLASS").expanduser()
+    Top_Dir =  pathlib.Path("captures/IMG_CLASS_10s").expanduser()
     files = sorted(Top_Dir.rglob("*.csv"))
     output_path = "captures/inferences.csv"
 

@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 from saleae import automation
 
-MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Image_Classification").expanduser()
+MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Object_Detection").expanduser()
 RESULTS_FILE = "inference_results.csv"
 
 # serial settings
@@ -64,7 +64,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
         for model in models:
             print(f"Testing {model.name}\n")
             rel_path = model.relative_to(MODELS_DIR)
-            device_path = f"/models/Image_Classification/{rel_path.as_posix()}"  # for header
+            device_path = f"/models/Object_Detection/{rel_path.as_posix()}"  # for header
             print(f"Running {device_path}\n")
             host_path = str(model.resolve())  # absolute host path for cmake
             print(host_path)
@@ -103,7 +103,7 @@ with open(RESULTS_FILE, "w", newline="") as csvfile:
                 digital_threshold_volts=3.3
             )
             capture_configuration = automation.CaptureConfiguration(
-                capture_mode=automation.TimedCaptureMode(duration_seconds=2.0)
+                capture_mode=automation.TimedCaptureMode(duration_seconds=10.0)
             )
 
             # Create output directory per model (or perhaps not)
