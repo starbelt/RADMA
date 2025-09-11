@@ -1,6 +1,6 @@
 import sys
 
-import matplotlib, csv, pathlib
+import matplotlib, pathlib
 import pandas as pd
 import matplotlib.pyplot as plt
 from os import path
@@ -70,7 +70,7 @@ class ModelStatsPlotting:
 
         model_dir = "~/Coral-TPU-Characterization/models/Image_Classification"
         pc = ParamCounts(model_dir)
-        inf_ms = inference_from_csvs("IMG_CLASS_10s") # as measured from Saleae
+        inf_ms = inference_from_csvs("IMG_CLASS_10s_doublearena") # as measured from Saleae
         param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
 
         ic_df = pd.read_excel(
@@ -110,6 +110,7 @@ class ModelStatsPlotting:
 
         make_figure(titles,model_names,values,units,self.plotdir+"/img_class_plot.png")
         param_latency_scatter(model_names,param_counts,latency_ms,self.plotdir+"/img_class_sctplot.png")
+        param_latency_scatter(model_names,param_counts,inf_ms,self.plotdir+"/img_class_sctplot_inf.png")
 
         inf_ms, latency_ms, model_names, param_counts, top1accuracy = zip(*trimmed)
         titles = ["Parameter Count","Inference Time","Quoted Latency", "Top-1 Accuracy"]
@@ -136,10 +137,10 @@ class ModelStatsPlotting:
         latency_ms = ic_df["Latency (ms)"].tolist()
         mAP = ic_df["mAP"].tolist()
 
-        combined = list(zip(latency_ms, model_names, param_counts, mAP))
-        combined.sort(key=lambda x: x[0]) # sort by latency - fastest to slowest
+        combined = list(zip(inf_ms,latency_ms, model_names, param_counts, mAP))
+        combined.sort(key=lambda x: x[0]) # sort by measured latency
 
-        latency_ms, model_names, param_counts, mAP = zip(*combined) # overwrite with sorted lists
+        inf_ms, latency_ms, model_names, param_counts, mAP = zip(*combined) # overwrite with sorted lists
         updated_df = pd.DataFrame({
             "Model Name": model_names,
             "Latency (ms)": latency_ms,  # quoted

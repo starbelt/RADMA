@@ -23,7 +23,7 @@ constexpr char kModelPath[] = MODEL_PATH;
   //"models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite";
 
 // Tensor arena (preallocated in SDRAM)
-constexpr int kTensorArenaSize = 12 * 1024 * 1024;
+constexpr int kTensorArenaSize = 24 * 1024 * 1024;
 STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
   TaskHandle_t h = nullptr;

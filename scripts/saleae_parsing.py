@@ -36,7 +36,7 @@ def measure_pulses(csv_file):
     return inf_time.mean() * 1000  # mean inference time in ms
 
 if __name__ == "__main__":
-    Top_Dir =  pathlib.Path("captures/IMG_CLASS_10s").expanduser()
+    Top_Dir =  pathlib.Path("captures/IMG_CLASS_10s_doublearena").expanduser()
     files = sorted(Top_Dir.rglob("*.csv"))
     output_path = "captures/inferences.csv"
 
