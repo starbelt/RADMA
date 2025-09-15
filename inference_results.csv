@@ -1,0 +1,3 @@
+model,avg_logic_ms,category
+efficientnet-edgetpu-L_quant_edgetpu.tflite,162.975732295082,EfficientNet
+efficientnet-edgetpu-M_quant_edgetpu.tflite,40.3316223293173,EfficientNet

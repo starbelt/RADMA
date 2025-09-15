@@ -1,1 +1,1 @@
-#define MODEL_PATH "/models/Image_Classification/MobileNetV3/tf2_mobilenet_v3_edgetpu_1.0_224_ptq_edgetpu.tflite"
+#define MODEL_PATH "/models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite"
