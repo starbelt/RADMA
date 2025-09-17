@@ -1,51 +1,95 @@
-import csv, pathlib
 import numpy as np
 import pandas as pd
 
+def load_data(digital_csvfile, analog_csvfile):
+    """Load digital and analog Saleae CSVs"""
+    digital_df = pd.read_csv(digital_csvfile)
+    analog_df = pd.read_csv(analog_csvfile)
 
-def measure_pulses(csv_file):
-    """Parse csv for model inf time data and return average high pulse width in ms"""
-    df =pd.read_csv(csv_file)
-    t = df["Time [s]"].astype(float).to_numpy()[1:-2] #time (seconds)
-    d = df["Channel 0"].astype(float).to_numpy() [1:-2]# digital output (0 or 1)
+    # Digital: only rising/falling stored
+    t_digital = digital_df["Time [s]"].astype(float).to_numpy()[1:-2]
+    d = digital_df["Channel 0"].astype(float).to_numpy()[1:-2]
+
+    # Analog: continuous traces
+    t_analog = analog_df["Time [s]"].astype(float).to_numpy()[1:-2]
+    v1 = analog_df["Channel 1"].astype(float).to_numpy()[1:-2]  # before shunt
+    v2 = analog_df["Channel 2"].astype(float).to_numpy()[1:-2]  # after shunt
+
+    return t_digital, d, t_analog, v1, v2
 
 
-    if len(d) == 0:
-        raise Exception("No data found")
-
+def find_edges(t_digital, d):
+    """Find rising and falling edges in digital trace"""
     rising_idx = np.where((d[1:] == 1) & (d[:-1] == 0))[0] + 1
     falling_idx = np.where((d[1:] == 0) & (d[:-1] == 1))[0] + 1
 
-    rising = t[rising_idx]
-    falling = t[falling_idx]
+    rising = t_digital[rising_idx]
+    falling = t_digital[falling_idx]
 
-    # Align edges
     if len(rising) == 0 or len(falling) == 0:
-        print("No valid edges found")
-        return None
+        raise RuntimeError("No edges found in digital trace")
+
+    # Ensure first edge is rising
     if falling[0] < rising[0]:
         falling = falling[1:]
 
+    # Trim to equal length
     n = min(len(rising), len(falling))
-    inf_time = falling[:n] - rising[:n]
+    return rising[:n], falling[:n]
 
-    if len(inf_time) == 0:
-        print("You did it wrong :)")
-        return None
 
-    return inf_time.mean() * 1000  # mean inference time in ms
+def avg_inference_time(rising, falling):
+    """Compute average inference time"""
+    inf_times = falling - rising
+    return inf_times.mean(), inf_times
+
+def avg_power_measurement(rising, falling, t_analog, v1, v2, r_shunt):
+    """Compute average power and energy during inference windows"""
+    currents = (v1 - v2) / r_shunt  # low-side shunt: Vbefore - Vafter
+    p_inst = 5 * currents          # instantaneous power (const 5V DC)
+
+    avg_powers = []
+    energies = []
+
+    for t_start, t_end in zip(rising, falling):
+        mask = (t_analog >= t_start) & (t_analog <= t_end)
+        if not mask.any():
+            continue
+
+        t_window = t_analog[mask]
+        p_window = p_inst[mask]
+
+        energy = np.trapezoid(p_window, t_window)   # Joules
+        duration = t_window[-1] - t_window[0]
+
+        if duration > 0:
+            avg_powers.append(energy / duration)
+            energies.append(energy)
+
+    if not avg_powers:
+        raise RuntimeError("No valid analog windows found")
+
+    mean_power = np.mean(avg_powers)
+    mean_energy = np.mean(energies)
+
+    return mean_power, np.array(avg_powers), mean_energy, np.array(energies)
+
 
 if __name__ == "__main__":
-    Top_Dir =  pathlib.Path("captures/IMG_CLASS_10s_doublearena").expanduser()
-    files = sorted(Top_Dir.rglob("*.csv"))
-    output_path = "captures/inferences.csv"
+    digital_csv = "digital.csv"
+    analog_csv = "analog.csv"
+    r_shunt = 1.0  # ohms 
 
+    t_digital, d, t_analog, v1, v2 = load_data(digital_csv, analog_csv)
+    rising, falling = find_edges(t_digital, d)
 
-    with open(output_path, "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["model", "avg_logic_ms", "category"]) # header
-        for file in files:
-            model = file.parent.parent.name
-            inference_time_ms = measure_pulses(file)
-            print(model)
-            print(inference_time_ms)
+    mean_inf, all_inf = avg_inference_time(rising, falling)
+    mean_pwr, all_pwr, mean_energy, all_energy = avg_power_measurement(
+    rising, falling, t_analog, v1, v2, r_shunt
+)
+    print(f"Average inference time: {mean_inf*1e3:.2f} ms")
+    print(f"Average power: {mean_pwr*1e3:.2f} mW")
+    print(f"Average energy per inference: {mean_energy*1e3:.2f} mJ")
+        
+        
+    print(f"Per-inference energies: {all_energy}")
