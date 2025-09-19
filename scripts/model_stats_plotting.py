@@ -7,17 +7,19 @@ import matplotlib.pyplot as plt
 from os import path
 from adjustText import adjust_text
 from ParamCounts import ParamCounts
-from saleae_parsing import measure_pulses
+from saleae_parsing import SaleaeOutputParsing
 
 
-## Helper Functions ## 
+# Helper Functions ## 
 def inference_from_csvs(rundir):
-    top_dir =  pathlib.Path("captures/"+rundir).expanduser()
-    files = sorted(top_dir.rglob("*.csv"))
+    top_dir = pathlib.Path("captures") / rundir
     inference_time_ms = []
-    for file in files:
-        inference_time_ms.append(measure_pulses(file))
+    for root, dirs, files in top_dir.walk():
+        for d in sorted(dirs):
+            parsed = SaleaeOutputParsing(root / d)
+            inference_time_ms.append(parsed.avg_inference_time() * 1e3)
     return inference_time_ms
+
 
 def lighten_color(color, factor=0.5):
     """

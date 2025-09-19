@@ -27,8 +27,8 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
     print(f"Testing {model.name}\n")
 
     # Resolve relative paths from model to upper directory
-    rel_path = model.relative_to(model_dir) 
-    device_path = f"/models/Image_Classification/{rel_path.as_posix()}"  # for header -> kModelPath
+    rel_path = model.relative_to(pathlib.Path.cwd()) 
+    device_path = rel_path # for header -> kModelPath
     print(f"Running {device_path}\n")
     host_path = str(model.resolve())  # absolute host path for cmake
     
@@ -62,15 +62,18 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
     print("Preparing Logic Analyzer\n")
     device_configuration = automation.LogicDeviceConfiguration(
         enabled_digital_channels=[0],  # CTS GPIO on channel 0
+        enabled_analog_channels=[1,2],
         digital_sample_rate=100_000_000,
-        digital_threshold_volts=3.3
+        digital_threshold_volts=1.8,
+        analog_sample_rate=312500,
+        analog_threshold_volts=1.8
     )
     capture_configuration = automation.CaptureConfiguration(
-        capture_mode=automation.TimedCaptureMode(duration_seconds=10.0)
+        capture_mode=automation.DigitalTriggerCaptureMode(0,0.001)
     )
 
     # Create output directory per model (or perhaps not)
-    # print("Preparing Output Directories\n")
+    # print("Preparing Output Directories\n")100_000_000
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if capture_dir:
         out_dir = pathlib.Path(f"captures/{capture_dir}/{model.stem}_{ts}")
@@ -91,7 +94,8 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
         print("Creating digital.csv and analog.csv")
         capture.export_raw_data_csv(
             directory=str(saleae_dir.resolve()),
-            digital_channels=[0]
+            digital_channels=[0],
+            analog_channels=[1,2]
         )
 
     # Capture serial output
@@ -129,8 +133,9 @@ if __name__ == "__main__":
         CAPTURE_DIR = None
         RESULTS_FILE = "inference_results.csv"
     elif len(sys.argv)>1:
-        MODELS_DIR = sys.argv[1]
+        MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/"+sys.argv[1]).expanduser()
         RESULTS_FILE = "inference_results.csv"
+        CAPTURE_DIR = None
     elif len(sys.argv)>=2:
         CAPTURE_DIR = sys.argv[2]
     # serial settings

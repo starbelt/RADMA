@@ -1,3 +1,11 @@
+"""
+Class and methods to parse through the digital and analog output .CSVs from the Logic 2 API. 
+Requires a target directory in which to find the CSVs of note, and returns metrics including:
+__
+average inference time
+energy per inference
+"""
+
 import numpy as np
 import pandas as pd
 import pathlib
@@ -14,11 +22,11 @@ class SaleaeOutputParsing:
         digital_files = list(data_directory.rglob("digital.csv"))
         analog_files = list(data_directory.rglob("analog.csv"))
 
-        if not digital_files or not analog_files:
-            raise FileNotFoundError("Saleae output file(s) not found")
+        if not digital_files:
+            raise FileNotFoundError("No digital.csv file found")
 
         self.digital_file = digital_files[0]
-        self.analog_file = analog_files[0]
+        self.analog_file = analog_files[0] if analog_files else None
 
         # load
         self.t_digital, self.d, self.t_analog, self.v1, self.v2 = self.load_data()
@@ -27,18 +35,21 @@ class SaleaeOutputParsing:
 
     def load_data(self):
         """Load digital and analog Saleae CSVs"""
-        digital_df = pd.read_csv(self.digital_file)
-        analog_df = pd.read_csv(self.analog_file)
-
+        
         # Digital: only rising/falling stored
+        digital_df = pd.read_csv(self.digital_file)
         t_digital = digital_df["Time [s]"].astype(float).to_numpy()[1:-2]
         d = digital_df["Channel 0"].astype(float).to_numpy()[1:-2]
 
         # Analog: continuous traces
-        t_analog = analog_df["Time [s]"].astype(float).to_numpy()[1:-2]
-        v1 = analog_df["Channel 1"].astype(float).to_numpy()[1:-2]  # before shunt
-        v2 = analog_df["Channel 2"].astype(float).to_numpy()[1:-2]  # after shunt
-
+        if not self.analog_file:
+            return t_digital, d, None, None, None
+        else:
+            analog_df = pd.read_csv(self.analog_file)
+            t_analog = analog_df["Time [s]"].astype(float).to_numpy()[1:-2]
+            v1 = analog_df["Channel 1"].astype(float).to_numpy()[1:-2]  # before shunt
+            v2 = analog_df["Channel 2"].astype(float).to_numpy()[1:-2]  # after shunt
+            
         return t_digital, d, t_analog, v1, v2
 
     def find_edges(self, t_digital, d):
@@ -66,6 +77,8 @@ class SaleaeOutputParsing:
 
     def avg_power_measurement(self, psu_dc_volts, r_shunt):
         """Compute average power and energy during inference windows"""
+        if not self.v1:
+            raise Exception("No analog file output")
         v_shunt = self.v1 - self.v2   # voltage across resistor
         v_device = psu_dc_volts - v_shunt
         I = v_shunt / r_shunt
@@ -107,4 +120,4 @@ if __name__ == "__main__":
     print(f"Average inference time: {parser.avg_inference_time()*1e3:.2f} ms")
     print(f"Average power: {mean_pwr*1e3:.2f} mW")
     print(f"Average energy per inference: {mean_energy*1e3:.2f} mJ")
-    print(f"Number of inferences: {len(all_energy)}")
+    print(f"Number of inferences: {len(parser.inf_times)}")
