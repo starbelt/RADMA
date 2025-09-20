@@ -6,8 +6,11 @@ from saleae_parsing import SaleaeOutputParsing
 from datetime import datetime
 from saleae import automation
 
-def wait_for_serial(port : str, timeout=30 ):
+def wait_for_serial(port: str, timeout=30):
     """Waits until the serial port is open, or raises a timeout"""
+    if not port:
+        raise ValueError("Serial port is not provided or is None.")
+
     start = time.time()
     while time.time() - start < timeout:
         if pathlib.Path(port).exists():
@@ -15,6 +18,7 @@ def wait_for_serial(port : str, timeout=30 ):
             return True
         time.sleep(0.5)
     raise TimeoutError(f"Serial port {port} not found within {timeout}s")
+
 
 def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_dir : str, serial_port : str ,dc_volts_in : float, r_shunt :float):
     """
@@ -37,7 +41,7 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
         f.write(f'#define MODEL_PATH "{device_path}"\n')
     category = model.relative_to(model_dir).parts[0]
 
-    # Build & flash (cmake, make, then flash)
+    # # Build & flash (cmake, make, then flash)
     subprocess.run([
         "cmake",
         "-B", "out",
@@ -56,20 +60,19 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
 
     # Give board time to boot
     wait_for_serial(serial_port, timeout=30)
-    time.sleep(30)  # extra settle time for TPU context
+    # time.sleep(30)  # extra settle time for TPU context
 
     # Prepare Saleae capture configs
     print("Preparing Logic Analyzer\n")
     device_configuration = automation.LogicDeviceConfiguration(
         enabled_digital_channels=[0],  # CTS GPIO on channel 0
         enabled_analog_channels=[1,2],
-        digital_sample_rate=100_000_000,
+        digital_sample_rate=500_000_000,
         digital_threshold_volts=1.8,
-        analog_sample_rate=312500,
-        analog_threshold_volts=1.8
+        analog_sample_rate=31250
     )
     capture_configuration = automation.CaptureConfiguration(
-        capture_mode=automation.DigitalTriggerCaptureMode(0,0.001)
+        capture_mode=automation.TimedCaptureMode(duration_seconds=30.0)
     )
 
     # Create output directory per model (or perhaps not)
@@ -83,20 +86,20 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
     saleae_dir = out_dir / "saleae_raw"
 
     # Run Saleae capture
-
-    print("Running Capture\n")
-    with manager.start_capture(
-            device_id='C7495E5575CEA129',
-            device_configuration=device_configuration,
-            capture_configuration=capture_configuration) as capture:
-        # wait for timed capture (2 seconds)
-        capture.wait()
-        print("Creating digital.csv and analog.csv")
-        capture.export_raw_data_csv(
-            directory=str(saleae_dir.resolve()),
-            digital_channels=[0],
-            analog_channels=[1,2]
-        )
+    with automation.Manager.connect(port=10430) as manager:
+        print("Running Capture\n")
+        with manager.start_capture(
+                device_id='C7495E5575CEA129',
+                device_configuration=device_configuration,
+                capture_configuration=capture_configuration) as capture:
+            # wait for timed capture (2 seconds)
+            capture.wait()
+            print("Creating digital.csv and analog.csv")
+            capture.export_raw_data_csv(
+                directory=str(saleae_dir.resolve()),
+                digital_channels=[0],
+                analog_channels=[1,2]
+            )
 
     # Capture serial output
     # print("\nCapturing Serial\n")
@@ -117,12 +120,12 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
     #         inf_time = l.split(":")[1]
     #         break
 
-    # Measure pulses
-    print("Measuring Inference Time\n")
-    parser = SaleaeOutputParsing(saleae_dir)
-    mean_inf_ms = parser.avg_inference_time()*1e3
-    mean_pwr, all_pwr, mean_energy, all_energy = parser.avg_power_measurement(dc_volts_in, r_shunt)
-    
+        # Measure pulses
+        print("Measuring Inference Time\n")
+        parser = SaleaeOutputParsing(saleae_dir)
+        mean_inf_ms = parser.avg_inference_time()*1e3
+        mean_pwr, all_pwr, mean_energy, all_energy = parser.avg_power_measurement(dc_volts_in, r_shunt)
+        
     return mean_inf_ms, mean_energy, category, out_dir
 
 
@@ -143,14 +146,13 @@ if __name__ == "__main__":
     BAUDRATE = 115200
     
     with open(RESULTS_FILE, "w", newline="") as csvfile:
-        with automation.Manager.connect(port=10430) as manager:
-            writer = csv.writer(csvfile)
-            writer.writerow(["model", "avg inference time ms", "average energy per inference" ,"category"]) # header
-            # find all files ending with "_edgetpu.tflite" (recursively)
-            models = sorted(MODELS_DIR.rglob("*_edgetpu.tflite"))
-        
-            for model in models:
-                mean_inf_ms, mean_energy, category, out_dir = test_model(model, MODELS_DIR,SERIAL_PORT,CAPTURE_DIR,dc_volts_in=5,r_shunt=0.1)
-                # Write results
-                writer.writerow([model.name, mean_inf_ms, mean_energy, category])
-                print(f"\nMeasurements written to {out_dir}\n")
+        writer = csv.writer(csvfile)
+        writer.writerow(["model", "avg inference time ms", "average energy per inference" ,"category"]) # header
+        # find all files ending with "_edgetpu.tflite" (recursively)
+        models = sorted(MODELS_DIR.rglob("*_edgetpu.tflite"))
+    
+        for model in models:
+            mean_inf_ms, mean_energy, category, out_dir = test_model(model, MODELS_DIR, CAPTURE_DIR, SERIAL_PORT,dc_volts_in=5,r_shunt=0.1)
+            # Write results
+            writer.writerow([model.name, mean_inf_ms, mean_energy, category])
+            print(f"\nMeasurements written to {out_dir}\n")

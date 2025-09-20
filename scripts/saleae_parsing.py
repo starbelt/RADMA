@@ -16,7 +16,7 @@ class SaleaeOutputParsing:
         if data_directory is None:
             data_directory = pathlib.Path.cwd()
         else:
-            data_directory = pathlib.Path(data_directory)
+            data_directory = pathlib.Path(data_directory).expanduser()
 
         # find files
         digital_files = list(data_directory.rglob("digital.csv"))
@@ -52,24 +52,45 @@ class SaleaeOutputParsing:
             
         return t_digital, d, t_analog, v1, v2
 
-    def find_edges(self, t_digital, d):
-        """Find rising and falling edges in digital trace"""
+    # def find_edges(self, t_digital, d):
+    #     """Find rising and falling edges in digital trace"""
+    #     rising_idx = np.where((d[1:] == 1) & (d[:-1] == 0))[0] + 1
+    #     falling_idx = np.where((d[1:] == 0) & (d[:-1] == 1))[0] + 1
+
+    #     rising = t_digital[rising_idx]
+    #     falling = t_digital[falling_idx]
+
+    #     if len(rising) == 0 or len(falling) == 0:
+    #         raise RuntimeError("No edges found in digital trace")
+
+    #     # Ensure first edge is rising
+    #     if falling[0] < rising[0]:
+    #         falling = falling[1:]
+
+    #     # Trim to equal length
+    #     n = min(len(rising), len(falling))
+    #     return rising[:n], falling[:n]
+
+    def find_edges(self, t, d, min_pulse_width=1e-3):
+        # find raw transitions
         rising_idx = np.where((d[1:] == 1) & (d[:-1] == 0))[0] + 1
         falling_idx = np.where((d[1:] == 0) & (d[:-1] == 1))[0] + 1
+        rising = t[rising_idx]
+        falling = t[falling_idx]
 
-        rising = t_digital[rising_idx]
-        falling = t_digital[falling_idx]
-
+        # pair them, then filter short pulses
         if len(rising) == 0 or len(falling) == 0:
-            raise RuntimeError("No edges found in digital trace")
+            raise RuntimeError("No edges found")
 
-        # Ensure first edge is rising
+        # ensure rising starts first
         if falling[0] < rising[0]:
             falling = falling[1:]
-
-        # Trim to equal length
         n = min(len(rising), len(falling))
-        return rising[:n], falling[:n]
+        rising = rising[:n]; falling = falling[:n]
+
+        long_mask = (falling - rising) >= min_pulse_width
+        return rising[long_mask], falling[long_mask]
+
 
     def avg_inference_time(self):
         """Return average inference time in seconds"""
@@ -77,7 +98,7 @@ class SaleaeOutputParsing:
 
     def avg_power_measurement(self, psu_dc_volts, r_shunt):
         """Compute average power and energy during inference windows"""
-        if not self.v1:
+        if not self.v1.any():
             raise Exception("No analog file output")
         v_shunt = self.v1 - self.v2   # voltage across resistor
         v_device = psu_dc_volts - v_shunt
@@ -121,3 +142,8 @@ if __name__ == "__main__":
     print(f"Average power: {mean_pwr*1e3:.2f} mW")
     print(f"Average energy per inference: {mean_energy*1e3:.2f} mJ")
     print(f"Number of inferences: {len(parser.inf_times)}")
+
+
+    p2 = SaleaeOutputParsing("/home/jack/Coral-TPU-Characterization/captures/IMG_CLASS_10s_doublearena/efficientnet-edgetpu-L_quant_edgetpu_2025-09-10_13-30-03/saleae_raw")
+    print(f"Average inference time: {p2.avg_inference_time()*1e3:.2f} ms")
+    

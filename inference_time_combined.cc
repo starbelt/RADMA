@@ -23,7 +23,7 @@ constexpr char kModelPath[] = MODEL_PATH;
   //"models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite";
 
 // Tensor arena (preallocated in SDRAM)
-constexpr int kTensorArenaSize = 24 * 1024 * 1024;
+constexpr int kTensorArenaSize = 8 * 1024 * 1024;
 STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
   TaskHandle_t h = nullptr;
@@ -75,10 +75,20 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
   std::vector<uint8_t> static_image(input_tensor->bytes, 127);
   memcpy(input_tensor->data.uint8, static_image.data(), input_tensor->bytes);
 
+// Enable DWT cycle counter
+
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+  DWT->CYCCNT = 0;
+
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
   for (;;) {
+
     // Start timing & toggle GPIO HIGH
+    const uint32_t t_start = DWT->CYCCNT;
     GpioSet(kUartCts, true);
     __DSB(); __ISB();
+
 
     if (interpreter.Invoke() != kTfLiteOk) {
       printf("ERROR: InferenceTask() failed\r\n");
@@ -88,7 +98,17 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
     // Toggle GPIO LOW & end timing
     GpioSet(kUartCts, false);
     __DSB(); __ISB();
+    const uint32_t t_end = DWT->CYCCNT;
 
+
+#if defined(SystemCoreClock)
+    const double cpu_hz = static_cast<double>(SystemCoreClock);
+    printf("%d",cpu_hz)
+#else
+    const double cpu_hz = 800e6;
+#endif
+    const double ms = static_cast<double>(t_end - t_start) / (cpu_hz / 1000.0);
+    printf("invoke_ms=%.3f\r\n", ms);
   }
 }
 
