@@ -1,3 +1,6 @@
-model,avg_logic_ms,category
-efficientnet-edgetpu-L_quant_edgetpu.tflite,162.975732295082,EfficientNet
-efficientnet-edgetpu-M_quant_edgetpu.tflite,40.3316223293173,EfficientNet
+model,avg inference time ms,average energy per inference,category
+ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite,131.38971889592747,-0.02629083796995622,SSDLite_MobileDet
+ssd_mobilenet_v1_coco_quant_postprocess_edgetpu.tflite,66.95503971497578,-0.01487530192540958,SSD_MobileNet_V1
+tf2_ssd_mobilenet_v2_coco17_ptq_edgetpu.tflite,83.47251382404693,-0.018980022166334605,SSD_MobileNet_V1_TF2
+ssd_mobilenet_v2_face_quant_postprocess_edgetpu.tflite,33.88094832657931,-0.008823656357759438,SSD_MobileNet_V2_Faces
+ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite,74.29757312499997,-0.017750483200000385,SSD_MobileNet_V2_TF1
