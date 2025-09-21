@@ -8,7 +8,7 @@ energy per inference
 
 import numpy as np
 import pandas as pd
-import pathlib
+import pathlib, os
 
 class SaleaeOutputParsing:
     def __init__(self, data_directory=None):
@@ -31,7 +31,10 @@ class SaleaeOutputParsing:
         # load
         self.t_digital, self.d, self.t_analog, self.v1, self.v2 = self.load_data()
         self.rising, self.falling = self.find_edges(self.t_digital, self.d)
-        self.inf_times = self.falling - self.rising
+        if not self.rising and not self.rising:
+            self.inf_times = None
+        else:
+            self.inf_times = self.falling - self.rising
 
     def load_data(self):
         """Load digital and analog Saleae CSVs"""
@@ -52,26 +55,7 @@ class SaleaeOutputParsing:
             
         return t_digital, d, t_analog, v1, v2
 
-    # def find_edges(self, t_digital, d):
-    #     """Find rising and falling edges in digital trace"""
-    #     rising_idx = np.where((d[1:] == 1) & (d[:-1] == 0))[0] + 1
-    #     falling_idx = np.where((d[1:] == 0) & (d[:-1] == 1))[0] + 1
-
-    #     rising = t_digital[rising_idx]
-    #     falling = t_digital[falling_idx]
-
-    #     if len(rising) == 0 or len(falling) == 0:
-    #         raise RuntimeError("No edges found in digital trace")
-
-    #     # Ensure first edge is rising
-    #     if falling[0] < rising[0]:
-    #         falling = falling[1:]
-
-    #     # Trim to equal length
-    #     n = min(len(rising), len(falling))
-    #     return rising[:n], falling[:n]
-
-    def find_edges(self, t, d, min_pulse_width=1e-3):
+    def find_edges(self, t : np.array, d : np.array, min_pulse_width=1e-3):
         # find raw transitions
         rising_idx = np.where((d[1:] == 1) & (d[:-1] == 0))[0] + 1
         falling_idx = np.where((d[1:] == 0) & (d[:-1] == 1))[0] + 1
@@ -80,7 +64,7 @@ class SaleaeOutputParsing:
 
         # pair them, then filter short pulses
         if len(rising) == 0 or len(falling) == 0:
-            raise RuntimeError("No edges found")
+            return None, None
 
         # ensure rising starts first
         if falling[0] < rising[0]:
@@ -90,20 +74,47 @@ class SaleaeOutputParsing:
 
         long_mask = (falling - rising) >= min_pulse_width
         return rising[long_mask], falling[long_mask]
+    
+    def find_idle_power(self):
+        """Cache or load persistent idle power from CSV"""
+        if self.idle_power is not None:
+            return self.idle_power
 
+        idle_csv = pathlib.Path("~/Coral-TPU-Characterization/captures/idle_power/idle.csv").expanduser()
+
+        # if csv with stored value doesn't exist, find the value and store it for future use
+        if not idle_csv.exists() or os.stat(idle_csv).st_size == 0:
+            mean_power, _, _, _ = self.avg_power_measurement()
+            df = pd.DataFrame([{"Average Idle Power W": mean_power}])
+            idle_csv.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(idle_csv, index=False)
+            self.idle_power = mean_power
+        else:
+            idle_df = pd.read_csv(idle_csv)
+            self.idle_power = idle_df["Average Idle Power W"].iloc[0]
+
+        return self.idle_power
 
     def avg_inference_time(self):
         """Return average inference time in seconds"""
-        return np.mean(self.inf_times)
+        if not self.inf_times:
+            return None
+        else:
+            return np.mean(self.inf_times)
 
     def avg_power_measurement(self, psu_dc_volts, r_shunt):
         """Compute average power and energy during inference windows"""
         if not self.v1.any():
             raise Exception("No analog file output")
+        
         v_shunt = self.v1 - self.v2   # voltage across resistor
         v_device = psu_dc_volts - v_shunt
         I = v_shunt / r_shunt
-        p_inst = v_device * I  # instantaneous power
+        p_inst = v_device * I - (self.idle_power if self.idle_power is not None else 0) # instantaneous power
+
+        if self.rising is None or self.falling is None:
+            mean_power = np.mean(p_inst)
+            return mean_power, None, None, None
 
         avg_powers = []
         energies = []
@@ -123,17 +134,14 @@ class SaleaeOutputParsing:
                 avg_powers.append(energy / duration)
                 energies.append(energy)
 
-        if not avg_powers:
-            raise RuntimeError("No valid analog windows found")
-
-        mean_power = np.mean(avg_powers)
-        mean_energy = np.mean(energies)
+        mean_power = np.mean(avg_powers) if avg_powers else None
+        mean_energy = np.mean(energies) if energies else None
 
         return mean_power, np.array(avg_powers), mean_energy, np.array(energies)
 
 
 if __name__ == "__main__":
-    r_shunt = 1.0  # ohms
+    r_shunt = 0.1  # ohms
     parser = SaleaeOutputParsing()  # defaults to cwd
 
     mean_pwr, all_pwr, mean_energy, all_energy = parser.avg_power_measurement(5, r_shunt)
@@ -142,7 +150,6 @@ if __name__ == "__main__":
     print(f"Average power: {mean_pwr*1e3:.2f} mW")
     print(f"Average energy per inference: {mean_energy*1e3:.2f} mJ")
     print(f"Number of inferences: {len(parser.inf_times)}")
-
 
     p2 = SaleaeOutputParsing("/home/jack/Coral-TPU-Characterization/captures/IMG_CLASS_10s_doublearena/efficientnet-edgetpu-L_quant_edgetpu_2025-09-10_13-30-03/saleae_raw")
     print(f"Average inference time: {p2.avg_inference_time()*1e3:.2f} ms")

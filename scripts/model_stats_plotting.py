@@ -10,8 +10,11 @@ from ParamCounts import ParamCounts
 from saleae_parsing import SaleaeOutputParsing
 
 
-# Helper Functions ## 
+# Data Collection and Sorting Functions ## 
 def inference_from_csvs(rundir):
+    """
+    If you only need the inference time and no power metrics (e.g. if you only have a digital.csv file)
+    """
     top_dir = pathlib.Path("captures") / rundir
     inference_time_ms = []
     for root, dirs, files in top_dir.walk():
@@ -20,33 +23,24 @@ def inference_from_csvs(rundir):
             inference_time_ms.append(parsed.avg_inference_time() * 1e3)
     return inference_time_ms
 
-
-def lighten_color(color, factor=0.5):
-    """
-    Lightens the given color.
-    factor=0 -> white, factor=1 -> original color.
-    """
-    r, g, b = matplotlib.colors.to_rgb(color)
-    return (1 - factor) + factor * r, (1 - factor) + factor * g, (1 - factor) + factor * b
-
 def collect_results(run_dir, psu_dc_volts=5.0, r_shunt=1.0):
+    """
+    Collects primary results of digital and analog Saleae results into a dict for ease of use.
+    Point to directory that directly parents the .CSVs
+    """
     run_dir = pathlib.Path(run_dir).expanduser()
     results = {}
-
     for subdir in sorted(run_dir.iterdir()):
         if not subdir.is_dir():
             continue
-
         try:
             parsed = SaleaeOutputParsing(subdir)
         except FileNotFoundError:
             continue
-
         avg_time = parsed.avg_inference_time() * 1e3  # ms
         mean_pwr, all_pwr, mean_energy, all_energy = parsed.avg_power_measurement(
             psu_dc_volts, r_shunt
         )
-
         # only add if both digital+analog are present
         if mean_pwr is not None:
             results[subdir.name] = {
@@ -56,8 +50,16 @@ def collect_results(run_dir, psu_dc_volts=5.0, r_shunt=1.0):
             }
     return results
 
-
 ## Plot generation Functions ##
+
+def lighten_color(color, factor=0.5):
+    """
+    Lightens the given color.
+    factor=0 -> white, factor=1 -> original color.
+    """
+    r, g, b = matplotlib.colors.to_rgb(color)
+    return (1 - factor) + factor * r, (1 - factor) + factor * g, (1 - factor) + factor * b
+
 def make_figure(titles,names,values,units,filename):
     cmap = matplotlib.colormaps["tab20"]
     colors = [cmap(i) for i in range(len(names))]
@@ -168,118 +170,6 @@ def param_latency_scatter(names,paramcount, latency, filename):
     plt.tight_layout()
     plt.savefig(filename, dpi=300, bbox_inches="tight")
 
-def img_class_power_runs(df, results_dict, run_names, filename=None):
-    """
-    4-row figure ordered by ascending Energy per Inference (mJ):
-      1) Energy per inference (mJ)
-      2) Top-1 Accuracy (%)
-      3) Stacked latency (measured vs quoted) (ms)
-      4) Top-1 Accuracy per Energy (% / mJ)
-
-    Returns the sorted dataframe used for plotting.
-    """
-    subset = df[df["Model name"].isin(run_names)].copy()
-    if subset.empty:
-        raise ValueError(f"No matching models found for run_names={run_names}")
-
-    # map measured/power/energy from results_dict
-    subset["Measured Inference Time (ms)"] = subset["Model name"].map(
-        lambda m: results_dict.get(m, {}).get("inference_time_ms")
-    )
-    subset["Average Power (mW)"] = subset["Model name"].map(
-        lambda m: results_dict.get(m, {}).get("avg_power_mW")
-    )
-    subset["Energy per Inference (mJ)"] = subset["Model name"].map(
-        lambda m: results_dict.get(m, {}).get("energy_mJ")
-    )
-
-    # coerce numeric and required columns
-    for col in ["Energy per Inference (mJ)", "Measured Inference Time (ms)", "Latency (ms)", "Top-1 Accuracy"]:
-        if col in subset.columns:
-            subset[col] = pd.to_numeric(subset[col], errors="coerce")
-        else:
-            raise KeyError(f"Required column missing in dataframe: {col}")
-
-    # drop rows missing any required value
-    required = ["Energy per Inference (mJ)", "Measured Inference Time (ms)", "Latency (ms)", "Top-1 Accuracy"]
-    valid_mask = subset[required].notnull().all(axis=1)
-    if not valid_mask.all():
-        dropped = subset.loc[~valid_mask, "Model name"].tolist()
-        print(f"Dropped runs due to missing data: {dropped}")
-        subset = subset.loc[valid_mask].copy()
-
-    if subset.empty:
-        raise ValueError("No valid runs left after dropping rows with missing data.")
-
-    # sort by energy ascending and reset index
-    subset.sort_values("Energy per Inference (mJ)", ascending=True, inplace=True)
-    subset.reset_index(drop=True, inplace=True)
-
-    # prepare plotting arrays AFTER sorting
-    names = subset["Model name"].tolist()
-    energy = subset["Energy per Inference (mJ)"].to_numpy()
-    accuracy = subset["Top-1 Accuracy"].to_numpy()
-    measured = subset["Measured Inference Time (ms)"].to_numpy()
-    quoted = subset["Latency (ms)"].to_numpy()
-    acc_per_energy = accuracy / energy
-
-    cmap = matplotlib.colormaps["tab20"]
-    colors = [cmap(i) for i in range(len(names))]
-    x_pos = np.arange(len(names))
-
-    fig, axes = plt.subplots(nrows=4, ncols=1, sharex=True, figsize=(14, 16))
-
-    # 1) Energy per inference
-    axes[0].bar(x_pos, energy, color=colors)
-    axes[0].set_title("Energy per Inference", fontsize=18)
-    axes[0].set_ylabel("mJ", fontsize=14)
-    for i, e in enumerate(energy):
-        axes[0].text(x_pos[i], e * 1.01, f"{e:.1f}", ha="center", va="bottom", fontsize=10)
-
-    # 2) Top-1 Accuracy
-    axes[1].bar(x_pos, accuracy, color=colors)
-    axes[1].set_title("Top-1 Accuracy", fontsize=18)
-    axes[1].set_ylabel("%", fontsize=14)
-    axes[1].set_ylim(0, 100)
-    for i, a in enumerate(accuracy):
-        axes[1].text(x_pos[i], a * 1.01, f"{a:.1f}", ha="center", va="bottom", fontsize=10)
-
-    # 3) Stacked latency (measured vs quoted)
-    for i, (m, q) in enumerate(zip(measured, quoted)):
-        if m >= q:
-            axes[2].bar(x_pos[i], q, color=colors[i])
-            axes[2].bar(x_pos[i], m - q, bottom=q, color=lighten_color(colors[i], 0.5))
-            axes[2].text(x_pos[i], m * 1.01, f"{m:.1f}", ha="center", va="bottom", fontsize=10)
-        else:
-            axes[2].bar(x_pos[i], m, color=colors[i])
-            axes[2].bar(x_pos[i], q - m, bottom=m, color=lighten_color(colors[i], 0.5))
-            axes[2].text(x_pos[i], q * 1.01, f"{q:.1f}", ha="center", va="bottom", fontsize=10)
-
-    axes[2].set_title("Measured vs Quoted Latency", fontsize=18)
-    axes[2].set_ylabel("ms", fontsize=14)
-    y_max = max(measured.max(initial=0), quoted.max(initial=0))
-    axes[2].set_ylim(0, y_max * 1.2)
-
-    # 4) Accuracy per Energy
-    axes[3].bar(x_pos, acc_per_energy, color=colors)
-    axes[3].set_title("Top-1 Accuracy per Energy (% / mJ)", fontsize=18)
-    axes[3].set_ylabel("% / mJ", fontsize=14)
-    for i, v in enumerate(acc_per_energy):
-        axes[3].text(x_pos[i], v * 1.01, f"{v:.2f}", ha="center", va="bottom", fontsize=10)
-
-    # shared x labels
-    axes[3].set_xticks(x_pos)
-    axes[3].set_xticklabels(names, rotation=45, ha="right", fontsize=12)
-
-    plt.tight_layout()
-    if filename:
-        plt.savefig(filename, dpi=300, bbox_inches="tight")
-        plt.close(fig)
-    else:
-        plt.show()
-
-    return subset
-
 
 ## Main class ##
 class ModelStatsPlotting:
@@ -363,6 +253,130 @@ class ModelStatsPlotting:
             self.plotdir+"/img_class_combined_trimmed.png"
         )
 
+    def power_inf_runs(self, df : pd.dataframe, results_dir : str, model_category : str = None, run_names : list = None,  filename=None):
+        """
+        4-row figure ordered by ascending Energy per Inference (mJ):
+        1) Energy per inference (mJ)
+        2) Top-1 Accuracy (%)
+        3) Stacked latency (measured vs quoted) (ms)
+        4) Top-1 Accuracy per Energy (% / mJ)
+
+        Returns the sorted dataframe used for plotting.
+        """
+
+        if not model_category:
+            sheet_name = "Img_Class"
+        elif model_category not in ["Img_Class","Obj_Det","Segmentation","Audio_Classification"]:
+            raise ValueError(f"Model Category {model_category} does not exist. Choose a valid model category: Img_Class,Obj_Det,Segmentation,Audio_Classification")
+
+        ## Read model parameters from excel sheet and test results from csvs in the results_dir
+        results_dict = collect_results(results_dir)
+        df = pd.read_excel(self.sheet, sheet_name)
+
+        ## Map those two into a unified dataframe, only including the specified models
+        if not run_names:
+            subset = df
+        subset = df[df["Model name"].isin(run_names)].copy()
+        if subset.empty:
+            raise ValueError(f"No matching models found for run_names={run_names}")
+
+        # map measured/power/energy from results_dict
+        subset["Measured Inference Time (ms)"] = subset["Model name"].map(
+            lambda m: results_dict.get(m, {}).get("inference_time_ms")
+        )
+        subset["Average Power (mW)"] = subset["Model name"].map(
+            lambda m: results_dict.get(m, {}).get("avg_power_mW")
+        )
+        subset["Energy per Inference (mJ)"] = subset["Model name"].map(
+            lambda m: results_dict.get(m, {}).get("energy_mJ")
+        )
+
+        # coerce numeric and required columns
+        for col in ["Energy per Inference (mJ)", "Measured Inference Time (ms)", "Latency (ms)", "Top-1 Accuracy"]:
+            if col in subset.columns:
+                subset[col] = pd.to_numeric(subset[col], errors="coerce")
+            else:
+                raise KeyError(f"Required column missing in dataframe: {col}")
+
+        # drop rows missing any required value
+        required = ["Energy per Inference (mJ)", "Measured Inference Time (ms)", "Latency (ms)", "Top-1 Accuracy"]
+        valid_mask = subset[required].notnull().all(axis=1)
+        if not valid_mask.all():
+            dropped = subset.loc[~valid_mask, "Model name"].tolist()
+            print(f"Dropped runs due to missing data: {dropped}")
+            subset = subset.loc[valid_mask].copy()
+
+        if subset.empty:
+            raise ValueError("No valid runs left after dropping rows with missing data.")
+
+        # sort by energy ascending and reset index
+        subset.sort_values("Energy per Inference (mJ)", ascending=True, inplace=True)
+        subset.reset_index(drop=True, inplace=True)
+
+        # prepare plotting arrays AFTER sorting
+        names = subset["Model name"].tolist()
+        energy = subset["Energy per Inference (mJ)"].to_numpy()
+        accuracy = subset["Top-1 Accuracy"].to_numpy()
+        measured = subset["Measured Inference Time (ms)"].to_numpy()
+        quoted = subset["Latency (ms)"].to_numpy()
+        acc_per_energy = accuracy / energy
+
+        cmap = matplotlib.colormaps["tab20"]
+        colors = [cmap(i) for i in range(len(names))]
+        x_pos = np.arange(len(names))
+
+        fig, axes = plt.subplots(nrows=4, ncols=1, sharex=True, figsize=(14, 16))
+
+        # 1) Energy per inference
+        axes[0].bar(x_pos, energy, color=colors)
+        axes[0].set_title("Energy per Inference", fontsize=18)
+        axes[0].set_ylabel("mJ", fontsize=14)
+        for i, e in enumerate(energy):
+            axes[0].text(x_pos[i], e * 1.01, f"{e:.1f}", ha="center", va="bottom", fontsize=10)
+
+        # 2) Top-1 Accuracy
+        axes[1].bar(x_pos, accuracy, color=colors)
+        axes[1].set_title("Top-1 Accuracy", fontsize=18)
+        axes[1].set_ylabel("%", fontsize=14)
+        axes[1].set_ylim(0, 100)
+        for i, a in enumerate(accuracy):
+            axes[1].text(x_pos[i], a * 1.01, f"{a:.1f}", ha="center", va="bottom", fontsize=10)
+
+        # 3) Stacked latency (measured vs quoted)
+        for i, (m, q) in enumerate(zip(measured, quoted)):
+            if m >= q:
+                axes[2].bar(x_pos[i], q, color=colors[i])
+                axes[2].bar(x_pos[i], m - q, bottom=q, color=lighten_color(colors[i], 0.5))
+                axes[2].text(x_pos[i], m * 1.01, f"{m:.1f}", ha="center", va="bottom", fontsize=10)
+            else:
+                axes[2].bar(x_pos[i], m, color=colors[i])
+                axes[2].bar(x_pos[i], q - m, bottom=m, color=lighten_color(colors[i], 0.5))
+                axes[2].text(x_pos[i], q * 1.01, f"{q:.1f}", ha="center", va="bottom", fontsize=10)
+
+        axes[2].set_title("Measured vs Quoted Latency", fontsize=18)
+        axes[2].set_ylabel("ms", fontsize=14)
+        y_max = max(measured.max(initial=0), quoted.max(initial=0))
+        axes[2].set_ylim(0, y_max * 1.2)
+
+        # 4) Accuracy per Energy
+        axes[3].bar(x_pos, acc_per_energy, color=colors)
+        axes[3].set_title("Top-1 Accuracy per Energy (% / mJ)", fontsize=18)
+        axes[3].set_ylabel("% / mJ", fontsize=14)
+        for i, v in enumerate(acc_per_energy):
+            axes[3].text(x_pos[i], v * 1.01, f"{v:.2f}", ha="center", va="bottom", fontsize=10)
+
+        # shared x labels
+        axes[3].set_xticks(x_pos)
+        axes[3].set_xticklabels(names, rotation=45, ha="right", fontsize=12)
+
+        plt.tight_layout()
+        if filename:
+            plt.savefig(filename, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+        else:
+            plt.show()
+
+        return subset
 
     def obj_det_plt(self):
         """Triple Stacked Bar Chart of Model Stats for Object Detection"""
@@ -443,13 +457,11 @@ if __name__ == "__main__":
     #plots.obj_det_plt()
     #plots.segmentation_plt() # hiding in libs currently 090825
 
-    results_dict = collect_results("/home/jack/Downloads/img_class_runs")
-
     # Select the runs you want to visualize
     run_names = ["efficientnet_M", "efficientnet_M_delay", "efficientnet_S", "mobilenetv3"]
 
     # Read the dataframe you want to merge against
-    df = pd.read_excel("scripts/Model_Stats.xlsx", sheet_name="Img_Class_outs")
+    
     print(df["Model name"].tolist())
     # Call the standalone function
     img_class_power_runs(
