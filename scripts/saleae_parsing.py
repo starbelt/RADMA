@@ -31,7 +31,7 @@ class SaleaeOutputParsing:
         # load
         self.t_digital, self.d, self.t_analog, self.v1, self.v2 = self.load_data()
         self.rising, self.falling = self.find_edges(self.t_digital, self.d)
-        if not self.rising and not self.rising:
+        if not self.rising.any() and not self.rising.any():
             self.inf_times = None
         else:
             self.inf_times = self.falling - self.rising
