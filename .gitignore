@@ -2,3 +2,4 @@ coralmicro
 out
 .idea
 cmake-build-debug
+__pycache__

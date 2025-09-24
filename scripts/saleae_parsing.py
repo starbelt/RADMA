@@ -24,14 +24,16 @@ class SaleaeOutputParsing:
 
         if not digital_files:
             raise FileNotFoundError("No digital.csv file found")
-
+        self.idle_power = None
         self.digital_file = digital_files[0]
         self.analog_file = analog_files[0] if analog_files else None
 
         # load
         self.t_digital, self.d, self.t_analog, self.v1, self.v2 = self.load_data()
+        # find valid GPIO high times
         self.rising, self.falling = self.find_edges(self.t_digital, self.d)
-        if not self.rising.any() and not self.rising.any():
+
+        if self.rising is None or self.falling is None:
             self.inf_times = None
         else:
             self.inf_times = self.falling - self.rising
@@ -55,7 +57,7 @@ class SaleaeOutputParsing:
             
         return t_digital, d, t_analog, v1, v2
 
-    def find_edges(self, t : np.array, d : np.array, min_pulse_width=1e-3):
+    def find_edges(self, t : np.ndarray, d : np.ndarray, min_pulse_width=1e-3):
         # find raw transitions
         rising_idx = np.where((d[1:] == 1) & (d[:-1] == 0))[0] + 1
         falling_idx = np.where((d[1:] == 0) & (d[:-1] == 1))[0] + 1
@@ -97,15 +99,19 @@ class SaleaeOutputParsing:
 
     def avg_inference_time(self):
         """Return average inference time in seconds"""
-        if not self.inf_times:
+        if self.inf_times is None or len(self.inf_times)==0:
             return None
         else:
             return np.mean(self.inf_times)
 
-    def avg_power_measurement(self, psu_dc_volts, r_shunt):
+    def avg_power_measurement(self, psu_dc_volts:float=5.0, r_shunt:float=1.0):
         """Compute average power and energy during inference windows"""
-        if not self.v1.any():
+
+        if self.v1 is None or self.v2 is None or self.t_analog is None:
             raise Exception("No analog file output")
+        if len(self.v1) == 0 or len(self.v2) == 0 or len(self.t_analog) == 0:
+            raise Exception("Analog arrays empty")
+
         
         v_shunt = self.v1 - self.v2   # voltage across resistor
         v_device = psu_dc_volts - v_shunt
@@ -139,18 +145,36 @@ class SaleaeOutputParsing:
 
         return mean_power, np.array(avg_powers), mean_energy, np.array(energies)
 
-
 if __name__ == "__main__":
     r_shunt = 0.1  # ohms
     parser = SaleaeOutputParsing()  # defaults to cwd
 
     mean_pwr, all_pwr, mean_energy, all_energy = parser.avg_power_measurement(5, r_shunt)
 
-    print(f"Average inference time: {parser.avg_inference_time()*1e3:.2f} ms")
-    print(f"Average power: {mean_pwr*1e3:.2f} mW")
-    print(f"Average energy per inference: {mean_energy*1e3:.2f} mJ")
-    print(f"Number of inferences: {len(parser.inf_times)}")
+    inf_time = parser.avg_inference_time()
+    if inf_time is not None:
+        print(f"Average inference time: {inf_time*1e3:.2f} ms")
+    else:
+        print("Average inference time: N/A")
+
+    if mean_pwr is not None:
+        print(f"Average power: {mean_pwr*1e3:.2f} mW")
+    else:
+        print("Average power: N/A")
+
+    if mean_energy is not None:
+        print(f"Average energy per inference: {mean_energy*1e3:.2f} mJ")
+    else:
+        print("Average energy per inference: N/A")
+
+    if parser.inf_times is not None:
+        print(f"Number of inferences: {len(parser.inf_times)}")
+    else:
+        print("Number of inferences: 0")
 
     p2 = SaleaeOutputParsing("/home/jack/Coral-TPU-Characterization/captures/IMG_CLASS_10s_doublearena/efficientnet-edgetpu-L_quant_edgetpu_2025-09-10_13-30-03/saleae_raw")
-    print(f"Average inference time: {p2.avg_inference_time()*1e3:.2f} ms")
-    
+    inf_time2 = p2.avg_inference_time()
+    if inf_time2 is not None:
+        print(f"Average inference time: {inf_time2*1e3:.2f} ms")
+    else:
+        print("Average inference time: N/A")

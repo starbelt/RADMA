@@ -20,7 +20,10 @@ def inference_from_csvs(rundir):
     for root, dirs, files in top_dir.walk():
         for d in sorted(dirs):
             parsed = SaleaeOutputParsing(root / d)
-            inference_time_ms.append(parsed.avg_inference_time() * 1e3)
+            if parsed.avg_inference_time() is not None:
+                inference_time_ms.append(parsed.avg_inference_time() * 1e3)
+            else:
+                inference_time_ms.append(None)
     return inference_time_ms
 
 def collect_results(run_dir, psu_dc_volts=5.0, r_shunt=1.0):
@@ -37,17 +40,20 @@ def collect_results(run_dir, psu_dc_volts=5.0, r_shunt=1.0):
             parsed = SaleaeOutputParsing(subdir)
         except FileNotFoundError:
             continue
-        avg_time = parsed.avg_inference_time() * 1e3  # ms
-        mean_pwr, all_pwr, mean_energy, all_energy = parsed.avg_power_measurement(
-            psu_dc_volts, r_shunt
-        )
-        # only add if both digital+analog are present
-        if mean_pwr is not None:
-            results[subdir.name] = {
-                "inference_time_ms": avg_time,
-                "avg_power_mW": mean_pwr * 1e3,
-                "energy_mJ": mean_energy * 1e3,
-            }
+        if parsed.avg_inference_time() is not None:
+            avg_time = parsed.avg_inference_time() * 1e3  # ms
+            mean_pwr, all_pwr, mean_energy, all_energy = parsed.avg_power_measurement(
+                psu_dc_volts, r_shunt
+            )
+            # only add if both digital+analog are present
+            if mean_pwr is not None:
+                results[subdir.name] = {
+                    "inference_time_ms": avg_time,
+                    "avg_power_mW": mean_pwr * 1e3,
+                    "energy_mJ": mean_energy * 1e3,
+                }
+        else:
+            raise Exception("No average inference time found")
     return results
 
 ## Plot generation Functions ##
@@ -253,7 +259,7 @@ class ModelStatsPlotting:
             self.plotdir+"/img_class_combined_trimmed.png"
         )
 
-    def power_inf_runs(self, df, results_dir : str, model_category : str = None, run_names : list = None,  filename=None):
+    def power_inf_runs(self, df, results_dir : str, model_category = None, run_names = None,  filename=None):
         """
         4-row figure ordered by ascending Energy per Inference (mJ):
         1) Energy per inference (mJ)
@@ -264,11 +270,31 @@ class ModelStatsPlotting:
         Returns the sorted dataframe used for plotting.
         """
 
-        if not model_category:
+        if model_category is None:
             sheet_name = "Img_Class"
         elif model_category not in ["Img_Class","Obj_Det","Segmentation","Audio_Classification"]:
-            raise ValueError(f"Model Category {model_category} does not exist. Choose a valid model category: Img_Class,Obj_Det,Segmentation,Audio_Classification")
-
+            sheet_name = model_category
+        else:
+            raise ValueError(
+            f"Model Category {model_category} does not exist. "
+            "Choose from: Img_Class, Obj_Det, Segmentation, Audio_Classification"
+            )
+        if run_names is None:
+            run_names=[ # all image classification models
+                "EfficientNet-EdgeTpu (L)", 
+                "EfficientNet-EdgeTpu (M)",
+                "EfficientNet-EdgeTpu (S)",
+                "Inception V1",
+                "Inception V2",
+                "MobileNet V1 (0.25)",
+                "MobileNet V1 (0.50)",
+                "MobileNet V1 (.75)",
+                "MobileNet V1 (1.0)",
+                "MobileNet V1 (TF_ver_2.0)",
+                "MobileNet V2",
+                "MobileNet V2 (TF_ver_2.0)",
+                "MobileNet V3"
+                ]
         ## Read model parameters from excel sheet and test results from csvs in the results_dir
         results_dict = collect_results(results_dir)
         df = pd.read_excel(self.sheet, sheet_name)
@@ -452,26 +478,36 @@ class ModelStatsPlotting:
 
 
 if __name__ == "__main__":
-    plots = ModelStatsPlotting("scripts/Model_Stats.xlsx","plots/")
+    plots = ModelStatsPlotting("scripts/Model_Stats.xlsx", "plots/")
     plots.img_class_plt()
-    #plots.obj_det_plt()
-    #plots.segmentation_plt() # hiding in libs currently 090825
+    plots.obj_det_plt()
+    # plots.segmentation_plt()
 
     # Select the runs you want to visualize
-    run_names = ["efficientnet_M", "efficientnet_M_delay", "efficientnet_S", "mobilenetv3"]
+    run_names = ["EfficientNet-EdgeTpu (M)", "EfficientNet-EdgeTpu (S)", "Inception V3", "MobileNet V1 (0.25)"]
 
-    # Read the dataframe you want to merge against
-    
-    print(df["Model name"].tolist())
-    # Call the standalone function
-    img_class_power_runs(
-        df=df,
-        results_dict=results_dict,
-        run_names=[
-        "EfficientNet-EdgeTpu (M)",
-        "EfficientNet-EdgeTpu (S)",
-        "Inception V3",
-        "MobileNet V1 (0.25)"
-        ],
+    # Call the method that already merges Excel + Saleae results
+    subset = plots.power_inf_runs(
+        df=None,  # will get loaded inside the method
+        results_dir="captures/IMG_CLASS_NEW",
+        model_category="Img_Class",
+        run_names=run_names,
         filename="plots/img_class_power_runs.png"
     )
+
+    print(subset["Model name"].tolist())
+
+
+# run_names=["EfficientNet-EdgeTpu (L)",
+#     "EfficientNet-EdgeTpu (M)",
+#     "EfficientNet-EdgeTpu (S)",
+#     "Inception V1",
+#     "Inception V2",
+#     "MobileNet V1 (0.25)",
+#     "MobileNet V1 (0.50)",
+#     "MobileNet V1 (.75)",
+#     "MobileNet V1 (1.0)",
+#     "MobileNet V1 (TF_ver_2.0)",
+#     "MobileNet V2",
+#     "MobileNet V2 (TF_ver_2.0)",
+#     "MobileNet V3"]
