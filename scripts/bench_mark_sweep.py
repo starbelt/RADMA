@@ -1,10 +1,10 @@
-import sys, subprocess, time, csv, pathlib
+import argparse, subprocess, time, csv, pathlib
 
 import numpy as np
 import pandas as pd
 from saleae_parsing import SaleaeOutputParsing
 from datetime import datetime
-from saleae import automation
+from saleae import automation # type:ignore - I promise it exists
 
 def wait_for_serial(port: str, timeout=30):
     """Waits until the serial port is open, or raises a timeout"""
@@ -101,25 +101,6 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
                 analog_channels=[1,2]
             )
 
-    # Capture serial output
-    # print("\nCapturing Serial\n")
-    # ser = serial.Serial(SERIAL_PORT, BAUDRATE, timeout=10)
-    # lines = []
-    # while True:
-    #     line = ser.readline().decode(errors="ignore").strip()
-    #     if not line:
-    #         break
-    #     print(line)
-    #     lines.append(line)
-    # ser.close()
-    #
-    # # Parse result (sanity check from serial)
-    # inf_time = None
-    # for l in lines:
-    #     if "invoke_ms:" in l:
-    #         inf_time = l.split(":")[1]
-    #         break
-
         # Measure pulses
         print("Measuring Inference Time\n")
         parser = SaleaeOutputParsing(saleae_dir)
@@ -130,29 +111,74 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
 
 
 if __name__ == "__main__":
-    
-    if len(sys.argv)<=1:
-        MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/models/Image_Classification").expanduser()
-        CAPTURE_DIR = None
-        RESULTS_FILE = "inference_results.csv"
-    elif len(sys.argv)>1:
-        MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/"+sys.argv[1]).expanduser()
-        RESULTS_FILE = "inference_results.csv"
-        CAPTURE_DIR = None
-    elif len(sys.argv)>=2:
-        CAPTURE_DIR = sys.argv[2]
-    # serial settings
-    SERIAL_PORT = "/dev/ttyACM0"
-    BAUDRATE = 115200
-    
+    parser = argparse.ArgumentParser(
+        description="Run inference tests on EdgeTPU-compiled models with Saleae captures."
+    )
+    parser.add_argument(
+        "models_dir",
+        nargs="?",
+        type=pathlib.Path,
+        default=pathlib.Path("~/Coral-TPU-Characterization/models/Image_Classification").expanduser(),
+        help="Directory containing compiled EdgeTPU models (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--capture-dir",
+        type=str,
+        default=None,
+        help="Optional subdirectory for storing captures (default: None)"
+    )
+    parser.add_argument(
+        "--results-file",
+        type=str,
+        default="inference_results.csv",
+        help="CSV file to store inference results (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--serial-port",
+        type=str,
+        default="/dev/ttyACM0",
+        help="Serial port for the device (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--baudrate",
+        type=int,
+        default=115200,
+        help="Baudrate for serial communication (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--dc-volts-in",
+        type=float,
+        default=5.0,
+        help="Input DC voltage for power measurement (default: %(default)s V)"
+    )
+    parser.add_argument(
+        "--r-shunt",
+        type=float,
+        default=0.1,
+        help="Shunt resistance for power measurement (default: %(default)s Ω)"
+    )
+
+    args = parser.parse_args()
+
+    MODELS_DIR = args.models_dir
+    CAPTURE_DIR = args.capture_dir
+    RESULTS_FILE = args.results_file
+    SERIAL_PORT = args.serial_port
+    BAUDRATE = args.baudrate
+
     with open(RESULTS_FILE, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["model", "avg inference time ms", "average energy per inference" ,"category"]) # header
-        # find all files ending with "_edgetpu.tflite" (recursively)
+        writer.writerow(["model", "avg inference time ms", "average energy per inference", "category"])
+
         models = sorted(MODELS_DIR.rglob("*_edgetpu.tflite"))
-    
         for model in models:
-            mean_inf_ms, mean_energy, category, out_dir = test_model(model, MODELS_DIR, CAPTURE_DIR, SERIAL_PORT,dc_volts_in=5,r_shunt=0.1)
-            # Write results
+            mean_inf_ms, mean_energy, category, out_dir = test_model(
+                model,
+                MODELS_DIR,
+                CAPTURE_DIR,
+                SERIAL_PORT,
+                dc_volts_in=args.dc_volts_in,
+                r_shunt=args.r_shunt
+            )
             writer.writerow([model.name, mean_inf_ms, mean_energy, category])
             print(f"\nMeasurements written to {out_dir}\n")

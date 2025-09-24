@@ -100,7 +100,7 @@ class SaleaeOutputParsing:
     def avg_inference_time(self):
         """Return average inference time in seconds"""
         if self.inf_times is None or len(self.inf_times)==0:
-            return None
+            raise Exception("There are no valid inferences")
         else:
             return np.mean(self.inf_times)
 
