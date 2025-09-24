@@ -1,7 +1,6 @@
 #include <vector>
 
 #include "libs/inference_model_config.h"
-
 #include "coralmicro/libs/base/filesystem.h"
 #include "coralmicro/libs/base/led.h"
 #include "coralmicro/libs/tpu/edgetpu_manager.h"
@@ -18,15 +17,16 @@
 
 namespace coralmicro {
 namespace {
+
 // Path to model inside the image
 constexpr char kModelPath[] = MODEL_PATH;
+  //"models/Image_Classification/EfficientNet/S/efficientnet-edgetpu-S_quant_edgetpu.tflite";
 
 // Tensor arena (preallocated in SDRAM)
 constexpr int kTensorArenaSize = 8 * 1024 * 1024;
 STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
-TaskHandle_t h = nullptr;
-
+  TaskHandle_t h = nullptr;
 // Inference task (single task handles GPIO and inference)
 [[noreturn]] void InferenceTask(void* pvParameters) {
   LedSet(Led::kStatus, true);
@@ -47,6 +47,7 @@ TaskHandle_t h = nullptr;
   auto tpu_context = EdgeTpuManager::GetSingleton()->OpenDevice();
   if (!tpu_context) {
     printf("ERROR: Failed to get EdgeTpu context\r\n");
+    LedSet(Led::kStatus, false);
     vTaskSuspend(nullptr);
   }
 
@@ -54,7 +55,9 @@ TaskHandle_t h = nullptr;
   tflite::MicroErrorReporter error_reporter;
   tflite::MicroMutableOpResolver<3> resolver;
   resolver.AddDequantize();
-  // resolver.AddDetectionPostprocess();
+  // resolver.AddResizeBilinear();
+  // resolver.AddArgMax();
+  resolver.AddDetectionPostprocess();
   resolver.AddCustom(kCustomOp, RegisterCustomOp());
 
   tflite::MicroInterpreter interpreter(
@@ -63,6 +66,7 @@ TaskHandle_t h = nullptr;
 
   if (interpreter.AllocateTensors() != kTfLiteOk) {
     printf("ERROR: AllocateTensors() failed\r\n");
+    LedSet(Led::kStatus, false);
     vTaskSuspend(nullptr);
   }
 
@@ -71,16 +75,20 @@ TaskHandle_t h = nullptr;
   std::vector<uint8_t> static_image(input_tensor->bytes, 127);
   memcpy(input_tensor->data.uint8, static_image.data(), input_tensor->bytes);
 
-  // Enable DWT cycle counter
-  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-  DWT->CYCCNT = 0;
-  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+// Enable DWT cycle counter
 
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+  DWT->CYCCNT = 0;
+
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
   for (;;) {
+
     // Start timing & toggle GPIO HIGH
     const uint32_t t_start = DWT->CYCCNT;
     GpioSet(kUartCts, true);
     __DSB(); __ISB();
+
 
     if (interpreter.Invoke() != kTfLiteOk) {
       printf("ERROR: InferenceTask() failed\r\n");
@@ -91,6 +99,8 @@ TaskHandle_t h = nullptr;
     GpioSet(kUartCts, false);
     __DSB(); __ISB();
     const uint32_t t_end = DWT->CYCCNT;
+
+
 #if defined(SystemCoreClock)
     const double cpu_hz = static_cast<double>(SystemCoreClock);
     printf("%d",cpu_hz)
@@ -99,14 +109,11 @@ TaskHandle_t h = nullptr;
 #endif
     const double ms = static_cast<double>(t_end - t_start) / (cpu_hz / 1000.0);
     printf("invoke_ms=%.3f\r\n", ms);
-
-    vTaskDelay(pdMS_TO_TICKS(200));
   }
 }
 
 // Main creates the single task
 void Main() {
-  // quick sanity prints/LED to prove we reach Main()
   printf("Main() entered\r\n");
   LedSet(Led::kStatus, true);
   vTaskDelay(pdMS_TO_TICKS(200));

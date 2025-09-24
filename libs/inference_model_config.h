@@ -1,1 +1,1 @@
-#define MODEL_PATH "/models/ssd_mobilenet_v2_face_quant_postprocess_edgetpu.tflite"
+#define MODEL_PATH "models/Object_Detection/SSD_MobileNet_V2_TF1/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite"

@@ -70,8 +70,7 @@ class ParamCounts:
         results = []
         #print(f"Scanning: {self.dir}")
         for root, dirs, files in os.walk(self.dir):
-            #print(f"Scanning: {root} with {len(files)} files")
-
+            dirs.sort()   # ensures alphabetical walk of subdirs
             if os.path.basename(root) == "CPU_ref":
                 for f in sorted(files):
                     if f.endswith(".tflite"):
@@ -100,4 +99,8 @@ if __name__ == "__main__":
     #
     # print("\nParameter counts:")
     # print(results)
-    pass
+
+    base_dir = "~/Coral-TPU-Characterization/models/Image_Classification/MobileNetV1/"
+    pc = ParamCounts(base_dir)
+    results = pc.scan_models()
+    print(results)
