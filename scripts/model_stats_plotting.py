@@ -50,7 +50,7 @@ def collect_results(run_dir, psu_dc_volts=5.0, r_shunt=1.0):
                 results[subdir.name] = {
                     "inference_time_ms": avg_time,
                     "avg_power_mW": mean_pwr * 1e3,
-                    "energy_mJ": mean_energy * 1e3,
+                    "energy_mJ": mean_energy * 1e3 if mean_energy else 0
                 }
         else:
             raise Exception("No average inference time found")
@@ -63,7 +63,7 @@ def lighten_color(color, factor=0.5):
     Lightens the given color.
     factor=0 -> white, factor=1 -> original color.
     """
-    r, g, b = matplotlib.colors.to_rgb(color)
+    r, g, b = matplotlib.colors.to_rgb(color) # pyright: ignore[reportAttributeAccessIssue] 
     return (1 - factor) + factor * r, (1 - factor) + factor * g, (1 - factor) + factor * b
 
 def make_figure(titles,names,values,units,filename):
