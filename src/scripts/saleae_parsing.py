@@ -82,7 +82,7 @@ class SaleaeOutputParsing:
         if self.idle_power is not None:
             return self.idle_power
 
-        idle_csv = pathlib.Path("~/Coral-TPU-Characterization/captures/idle_power/idle.csv").expanduser()
+        idle_csv = pathlib.Path("~/Coral-TPU-Characterization/results/captures/idle_power/idle.csv").expanduser()
 
         # if csv with stored value doesn't exist, find the value and store it for future use
         if not idle_csv.exists() or os.stat(idle_csv).st_size == 0:
@@ -172,9 +172,4 @@ if __name__ == "__main__":
     else:
         print("Number of inferences: 0")
 
-    p2 = SaleaeOutputParsing("/home/jack/Coral-TPU-Characterization/captures/IMG_CLASS_10s_doublearena/efficientnet-edgetpu-L_quant_edgetpu_2025-09-10_13-30-03/saleae_raw")
-    inf_time2 = p2.avg_inference_time()
-    if inf_time2 is not None:
-        print(f"Average inference time: {inf_time2*1e3:.2f} ms")
-    else:
-        print("Average inference time: N/A")
+    

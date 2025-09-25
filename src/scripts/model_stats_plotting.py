@@ -15,7 +15,7 @@ def inference_from_csvs(rundir):
     """
     If you only need the inference time and no power metrics (e.g. if you only have a digital.csv file)
     """
-    top_dir = pathlib.Path("captures") / rundir
+    top_dir = pathlib.Path("results/captures") / rundir
     inference_time_ms = []
     for root, dirs, files in top_dir.walk():
         for d in sorted(dirs):
@@ -190,7 +190,7 @@ class ModelStatsPlotting:
     def img_class_plt(self):
         """Qtriple Stacked Bar Chart of Model Stats for Image Classification Models"""
 
-        model_dir = "~/Coral-TPU-Characterization/models/Image_Classification"
+        model_dir = "~/Coral-TPU-Characterization/data/models/Image_Classification"
         pc = ParamCounts(model_dir)
         inf_ms = inference_from_csvs("IMG_CLASS_NEW") # as measured from Saleae
         param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
@@ -406,7 +406,7 @@ class ModelStatsPlotting:
 
     def obj_det_plt(self):
         """Triple Stacked Bar Chart of Model Stats for Object Detection"""
-        model_dir = "~/Coral-TPU-Characterization/models/Object_Detection"
+        model_dir = "~/Coral-TPU-Characterization/data/models/Object_Detection"
         pc = ParamCounts(model_dir)
         inf_ms = inference_from_csvs("OBJ_DET_NEW") # as measured from Saleae
 
@@ -455,7 +455,7 @@ class ModelStatsPlotting:
 
     def segmentation_plt(self):
         """Double Stacked Bar Chart of Model Stats for Segmentation"""
-        model_dir = "~/Coral-TPU-Characterization/models/Segmentation"
+        model_dir = "~/Coral-TPU-Characterization/data/models/Segmentation"
 
         pc = ParamCounts(model_dir)
         param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
@@ -478,7 +478,7 @@ class ModelStatsPlotting:
 
 
 if __name__ == "__main__":
-    plots = ModelStatsPlotting("scripts/Model_Stats.xlsx", "plots/")
+    plots = ModelStatsPlotting("scripts/Model_Stats.xlsx", "results/plots/")
     plots.img_class_plt()
     plots.obj_det_plt()
     # plots.segmentation_plt()
@@ -489,7 +489,7 @@ if __name__ == "__main__":
     # Call the method that already merges Excel + Saleae results
     subset = plots.power_inf_runs(
         df=None,  # will get loaded inside the method
-        results_dir="captures/IMG_CLASS_NEW",
+        results_dir="results/captures/IMG_CLASS_NEW",
         model_category="Img_Class",
         run_names=run_names,
         filename="plots/img_class_power_runs.png"
