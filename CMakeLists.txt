@@ -15,13 +15,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 include_directories(coralmicro)
-include_directories(${CMAKE_CURRENT_LIST_DIR}/libs)
+include_directories(${CMAKE_CURRENT_LIST_DIR}/src/libs)
 
 
 add_subdirectory(coralmicro)
 
 add_executable_m7(coralmicro-app
-        inference_time_combined.cc
+        src/inference_time_combined.cc
         DATA
         ${MODEL_PATH}
 )

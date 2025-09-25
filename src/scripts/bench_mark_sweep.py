@@ -37,7 +37,7 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
     host_path = str(model.resolve())  # absolute host path for cmake
     
     # Patch header file
-    with open("libs/inference_model_config.h", "w") as f:
+    with open("src/libs/inference_model_config.h", "w") as f:
         f.write(f'#define MODEL_PATH "{device_path}"\n')
     category = model.relative_to(model_dir).parts[0]
 
@@ -79,9 +79,9 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
     # print("Preparing Output Directories\n")100_000_000
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if capture_dir:
-        out_dir = pathlib.Path(f"captures/{capture_dir}/{model.stem}_{ts}")
+        out_dir = pathlib.Path(f"results/captures/{capture_dir}/{model.stem}_{ts}")
     else:
-        out_dir = pathlib.Path(f"captures/{model.stem}_{ts}")
+        out_dir = pathlib.Path(f"results/captures/{model.stem}_{ts}")
     # # Folder for Saleae
     saleae_dir = out_dir / "saleae_raw"
 
@@ -118,7 +118,7 @@ if __name__ == "__main__":
         "models_dir",
         nargs="?",
         type=pathlib.Path,
-        default=pathlib.Path("~/Coral-TPU-Characterization/models/Image_Classification").expanduser(),
+        default=pathlib.Path("~/Coral-TPU-Characterization/data/models/Image_Classification").expanduser(),
         help="Directory containing compiled EdgeTPU models (default: %(default)s)"
     )
     parser.add_argument(
