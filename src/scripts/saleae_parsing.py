@@ -82,16 +82,13 @@ class SaleaeOutputParsing:
     
     def find_idle_power(self):
         """Cache or load persistent idle power from CSV"""
-        if self.idle_power is not None:
-            return self.idle_power
 
         from path_utils import get_repo_root
         idle_csv = get_repo_root() / "results/captures/idle_power/idle.csv"
 
-
         # if csv with stored value doesn't exist, find the value and store it for future use
         if not idle_csv.exists() or os.stat(idle_csv).st_size == 0:
-            mean_power, _, _, _ = self.avg_power_measurement()
+            mean_power, _, _, _ = self.avg_power_measurement(subtract_idle=False)
             df = pd.DataFrame([{"Average Idle Power W": mean_power}])
             idle_csv.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(idle_csv, index=False)
@@ -99,7 +96,8 @@ class SaleaeOutputParsing:
         else:
             idle_df = pd.read_csv(idle_csv)
             self.idle_power = idle_df["Average Idle Power W"].iloc[0]
-
+        
+        print(f"Idle Power = {self.idle_power} mW")
         return self.idle_power
 
     def avg_inference_time(self):
@@ -109,7 +107,7 @@ class SaleaeOutputParsing:
         else:
             return np.mean(self.inf_times)
 
-    def avg_power_measurement(self, psu_dc_volts:float=5.0, r_shunt:float=1.0):
+    def avg_power_measurement(self, psu_dc_volts: float = 5.0, r_shunt: float = 1.0, subtract_idle: bool = True):
         """Compute average power and energy during inference windows"""
 
         if self.v1 is None or self.v2 is None or self.t_analog is None:
@@ -117,11 +115,21 @@ class SaleaeOutputParsing:
         if len(self.v1) == 0 or len(self.v2) == 0 or len(self.t_analog) == 0:
             raise Exception("Analog arrays empty")
 
-        
-        v_shunt = self.v1 - self.v2   # voltage across resistor
+        v_shunt = self.v1 - self.v2
         v_device = psu_dc_volts - v_shunt
         I = v_shunt / r_shunt
-        p_inst = v_device * I - (self.idle_power if self.idle_power is not None else 0) # instantaneous power
+
+        # If subtract_idle=True, try to subtract cached idle
+        idle = 0.0
+        if subtract_idle:
+            if self.idle_power is None:
+                # Load from CSV, but don't recurse into avg_power_measurement()
+                self.find_idle_power()
+            idle = self.idle_power if self.idle_power is not None else 0.0
+        
+        print(f"v_device * I = {v_device * I}, idle = {idle}")
+
+        p_inst = v_device * I - idle
 
         if self.rising is None or self.falling is None:
             mean_power = np.mean(p_inst)
