@@ -8,6 +8,9 @@ from os import path
 from adjustText import adjust_text
 from ParamCounts import ParamCounts
 from saleae_parsing import SaleaeOutputParsing
+from path_utils import get_repo_root
+
+REPO_ROOT = get_repo_root()
 
 
 # Data Collection and Sorting Functions ## 
@@ -15,7 +18,7 @@ def inference_from_csvs(rundir):
     """
     If you only need the inference time and no power metrics (e.g. if you only have a digital.csv file)
     """
-    top_dir = pathlib.Path("results/captures") / rundir
+    top_dir = REPO_ROOT / "results/captures" / rundir
     inference_time_ms = []
     for root, dirs, files in top_dir.walk():
         for d in sorted(dirs):
@@ -26,12 +29,11 @@ def inference_from_csvs(rundir):
                 inference_time_ms.append(None)
     return inference_time_ms
 
-def collect_results(run_dir, psu_dc_volts=5.0, r_shunt=1.0):
+def collect_results(run_dir:pathlib.Path, psu_dc_volts=5.0, r_shunt=1.0):
     """
     Collects primary results of digital and analog Saleae results into a dict for ease of use.
     Point to directory that directly parents the .CSVs
     """
-    run_dir = pathlib.Path(run_dir).expanduser()
     results = {}
     for subdir in sorted(run_dir.iterdir()):
         if not subdir.is_dir():
@@ -190,7 +192,7 @@ class ModelStatsPlotting:
     def img_class_plt(self):
         """Qtriple Stacked Bar Chart of Model Stats for Image Classification Models"""
 
-        model_dir = "~/Coral-TPU-Characterization/data/models/Image_Classification"
+        model_dir = REPO_ROOT / "data/models/Image_Classification"
         pc = ParamCounts(model_dir)
         inf_ms = inference_from_csvs("IMG_CLASS_NEW") # as measured from Saleae
         param_counts = [x/1e6 for x in pc.scan_models()]  # scale to millions
@@ -206,6 +208,9 @@ class ModelStatsPlotting:
         latency_ms = ic_df["Latency (ms)"].tolist() # from coral docs
         top1accuracy = ic_df["Top-1 Accuracy (measured)"].tolist()
         top5accuracy = ic_df["Top-5 Accuracy"].tolist()
+
+        print(len(inf_ms), len(latency_ms), len(model_names), len(param_counts), len(top1accuracy))
+
 
         combined = list(zip(inf_ms, latency_ms,model_names, param_counts, top1accuracy))
         combined.sort(key=lambda x: x[0]) # sort by latency - fastest to slowest
@@ -259,7 +264,7 @@ class ModelStatsPlotting:
             self.plotdir+"/img_class_combined_trimmed.png"
         )
 
-    def power_inf_runs(self, df, results_dir : str, model_category = None, run_names = None,  filename=None):
+    def power_inf_runs(self, df, results_dir : pathlib.Path, model_category = None, run_names = None,  filename=None):
         """
         4-row figure ordered by ascending Energy per Inference (mJ):
         1) Energy per inference (mJ)
@@ -272,7 +277,7 @@ class ModelStatsPlotting:
 
         if model_category is None:
             sheet_name = "Img_Class"
-        elif model_category not in ["Img_Class","Obj_Det","Segmentation","Audio_Classification"]:
+        elif model_category in ["Img_Class","Obj_Det","Segmentation","Audio_Classification"]:
             sheet_name = model_category
         else:
             raise ValueError(
@@ -296,6 +301,7 @@ class ModelStatsPlotting:
                 "MobileNet V3"
                 ]
         ## Read model parameters from excel sheet and test results from csvs in the results_dir
+        print(f"results dir:{results_dir}")
         results_dict = collect_results(results_dir)
         df = pd.read_excel(self.sheet, sheet_name)
 
@@ -406,7 +412,8 @@ class ModelStatsPlotting:
 
     def obj_det_plt(self):
         """Triple Stacked Bar Chart of Model Stats for Object Detection"""
-        model_dir = "~/Coral-TPU-Characterization/data/models/Object_Detection"
+        model_dir = REPO_ROOT / "data/models/Object_Detection"
+
         pc = ParamCounts(model_dir)
         inf_ms = inference_from_csvs("OBJ_DET_NEW") # as measured from Saleae
 
@@ -421,6 +428,8 @@ class ModelStatsPlotting:
         model_names = ic_df["Model Name"].tolist()
         latency_ms = ic_df["Latency (ms)"].tolist()
         mAP = ic_df["mAP (measured)"].tolist()
+
+        print(len(inf_ms), len(latency_ms), len(model_names), len(param_counts), len(mAP))
 
         combined = list(zip(inf_ms,latency_ms, model_names, param_counts, mAP))
         combined.sort(key=lambda x: x[0]) # sort by measured latency
@@ -478,21 +487,27 @@ class ModelStatsPlotting:
 
 
 if __name__ == "__main__":
-    plots = ModelStatsPlotting("scripts/Model_Stats.xlsx", "results/plots/")
-    plots.img_class_plt()
-    plots.obj_det_plt()
+
+    REPO_ROOT = get_repo_root()
+
+    plots = ModelStatsPlotting(
+    REPO_ROOT / "src/scripts/Model_Stats.xlsx",
+    REPO_ROOT / "results/plots/"
+    )
+    #plots.img_class_plt()
+    #plots.obj_det_plt()
     # plots.segmentation_plt()
 
     # Select the runs you want to visualize
-    run_names = ["EfficientNet-EdgeTpu (M)", "EfficientNet-EdgeTpu (S)", "Inception V3", "MobileNet V1 (0.25)"]
+    run_names = ["EfficientNet-EdgeTpu (M)", "EfficientNet-EdgeTpu (S)", "Inception V2", "MobileNet V1 (0.25)"]
 
     # Call the method that already merges Excel + Saleae results
     subset = plots.power_inf_runs(
-        df=None,  # will get loaded inside the method
-        results_dir="results/captures/IMG_CLASS_NEW",
+        df=None,
+        results_dir= (REPO_ROOT / "results/captures/img_class_runs"),
         model_category="Img_Class",
         run_names=run_names,
-        filename="plots/img_class_power_runs.png"
+        filename=REPO_ROOT / "results/plots/img_class_power_runs.png"
     )
 
     print(subset["Model name"].tolist())

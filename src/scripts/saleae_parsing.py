@@ -9,6 +9,9 @@ energy per inference
 import numpy as np
 import pandas as pd
 import pathlib, os
+from path_utils import get_repo_root
+
+# setup
 
 class SaleaeOutputParsing:
     def __init__(self, data_directory=None):
@@ -82,7 +85,9 @@ class SaleaeOutputParsing:
         if self.idle_power is not None:
             return self.idle_power
 
-        idle_csv = pathlib.Path("~/Coral-TPU-Characterization/results/captures/idle_power/idle.csv").expanduser()
+        from path_utils import get_repo_root
+        idle_csv = get_repo_root() / "results/captures/idle_power/idle.csv"
+
 
         # if csv with stored value doesn't exist, find the value and store it for future use
         if not idle_csv.exists() or os.stat(idle_csv).st_size == 0:

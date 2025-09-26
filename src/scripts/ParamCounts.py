@@ -4,8 +4,12 @@ import sys
 import flatbuffers
 import tflite
 import numpy as np
+from path_utils import get_repo_root
 
+# Setup
+REPO_ROOT = get_repo_root()
 
+# Helpers
 def bytes_per_element_from_tensor(tensor):
     TT = tflite.TensorType
     tt = tensor.Type()
@@ -55,6 +59,7 @@ def count_tflite_params(model_path):
 
     return total_params
 
+# Exports
 class ParamCounts:
     def __init__(self, dir, verbose=False):
         self.dir = os.path.expanduser(dir)
@@ -100,7 +105,7 @@ if __name__ == "__main__":
     # print("\nParameter counts:")
     # print(results)
 
-    base_dir = "~/Coral-TPU-Characterization/models/Image_Classification/MobileNetV1/"
+    base_dir = "~/Coral-TPU-Characterization/data/models/Image_Classification/"
     pc = ParamCounts(base_dir)
     results = pc.scan_models()
     print(results)
