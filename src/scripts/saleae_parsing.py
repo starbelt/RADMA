@@ -10,8 +10,52 @@ import numpy as np
 import pandas as pd
 import pathlib, os
 from path_utils import get_repo_root
+import matplotlib.pyplot as plt
 
-# setup
+# helpers and diagnostic plots
+def plot_saleae_trace(directory, psu_voltage=5.0, r_shunt=0.1, plot_energy_bars=True):
+    parser = SaleaeOutputParsing(directory)
+    
+    # Zoom to first 0.12 seconds
+    mask = parser.t_analog <= 0.12
+    t = parser.t_analog[mask]
+    v1 = parser.v1[mask]
+    v2 = parser.v2[mask]
+    
+    current = (v1 - v2) / r_shunt  # Amps
+    power = current * psu_voltage  # Watts
+    
+    # Incremental energy per sample
+    dt = np.diff(t, prepend=t[0])
+    incremental_energy = current * psu_voltage * dt  # Joules per slice
+    
+    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(14, 8), sharex=True)
+    
+    # --- Voltage traces ---
+    ax1.plot(t, v1, label="V1 (before shunt)")
+    ax1.plot(t, v2, label="V2 (after shunt)")
+    ax1.set_ylabel("Voltage [V]")
+    ax1.set_title("Voltage Traces")
+    ax1.grid(True)
+    ax1.legend(loc="upper right")
+    
+    # --- Current trace with incremental energy ---
+    ax2.plot(t, current, color="C0", label="Current [A]")
+    ax2.bar(t, incremental_energy / incremental_energy.max() * current.max(),
+            width=dt, alpha=0.3, color="C1", label="Incremental Energy (scaled)")
+    ax2.set_xlabel("Time [s]")
+    ax2.set_ylabel("Current [A]")
+    ax2.set_title("Current Trace with Incremental Energy Overlay")
+    ax2.grid(True)
+    # Clean up legend duplicates
+    handles, labels = ax2.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    ax2.legend(by_label.values(), by_label.keys(), loc="upper right")
+    fig.suptitle(directory.name)
+    plt.tight_layout()
+    plt.savefig("Diagnostic_Trace_.png", dpi=300, bbox_inches="tight")
+
+
 
 class SaleaeOutputParsing:
     def __init__(self, data_directory=None):
@@ -159,30 +203,34 @@ class SaleaeOutputParsing:
         return mean_power, np.array(avg_powers), mean_energy, np.array(energies)
 
 if __name__ == "__main__":
-    r_shunt = 0.1  # ohms
-    parser = SaleaeOutputParsing()  # defaults to cwd
+    REPO_ROOT = get_repo_root()
+    
+    plot_saleae_trace(REPO_ROOT/"results/captures/obj_det_runs/SSDMobileNetV2TF1", psu_voltage=5.0, r_shunt=0.1, plot_energy_bars=True)
 
-    mean_pwr, all_pwr, mean_energy, all_energy = parser.avg_power_measurement(5, r_shunt)
+    # r_shunt = 0.1  # ohms
+    # parser = SaleaeOutputParsing()  # defaults to cwd
 
-    inf_time = parser.avg_inference_time()
-    if inf_time is not None:
-        print(f"Average inference time: {inf_time*1e3:.2f} ms")
-    else:
-        print("Average inference time: N/A")
+    # mean_pwr, all_pwr, mean_energy, all_energy = parser.avg_power_measurement(5, r_shunt)
 
-    if mean_pwr is not None:
-        print(f"Average power: {mean_pwr*1e3:.2f} mW")
-    else:
-        print("Average power: N/A")
+    # inf_time = parser.avg_inference_time()
+    # if inf_time is not None:
+    #     print(f"Average inference time: {inf_time*1e3:.2f} ms")
+    # else:
+    #     print("Average inference time: N/A")
 
-    if mean_energy is not None:
-        print(f"Average energy per inference: {mean_energy*1e3:.2f} mJ")
-    else:
-        print("Average energy per inference: N/A")
+    # if mean_pwr is not None:
+    #     print(f"Average power: {mean_pwr*1e3:.2f} mW")
+    # else:
+    #     print("Average power: N/A")
 
-    if parser.inf_times is not None:
-        print(f"Number of inferences: {len(parser.inf_times)}")
-    else:
-        print("Number of inferences: 0")
+    # if mean_energy is not None:
+    #     print(f"Average energy per inference: {mean_energy*1e3:.2f} mJ")
+    # else:
+    #     print("Average energy per inference: N/A")
+
+    # if parser.inf_times is not None:
+    #     print(f"Number of inferences: {len(parser.inf_times)}")
+    # else:
+    #     print("Number of inferences: 0")
 
     
