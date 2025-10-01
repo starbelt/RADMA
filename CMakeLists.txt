@@ -21,7 +21,7 @@ include_directories(${CMAKE_CURRENT_LIST_DIR}/src/libs)
 add_subdirectory(coralmicro)
 
 add_executable_m7(coralmicro-app
-        src/inference_time_combined.cc
+        inference_time_combined.cc
         DATA
         ${MODEL_PATH}
 )

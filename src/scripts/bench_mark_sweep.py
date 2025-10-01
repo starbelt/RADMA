@@ -50,7 +50,7 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
     ], check=True)
 
     subprocess.run(["make", "-C",
-        "out", "-j12"], check=True)
+        "out", "-j1", "VERBOSE=1"], check=True)
 
     subprocess.run([
         "python3", "coralmicro/scripts/flashtool.py",
