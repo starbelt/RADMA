@@ -29,7 +29,7 @@ def inference_from_csvs(rundir):
                 inference_time_ms.append(None)
     return inference_time_ms
 
-def collect_results(run_dir:pathlib.Path, psu_dc_volts=5.0, r_shunt=1.0):
+def collect_results(run_dir:pathlib.Path, psu_dc_volts=5.0, r_shunt=0.1):
     """
     Collects primary results of digital and analog Saleae results into a dict for ease of use.
     Point to directory that directly parents the .CSVs
