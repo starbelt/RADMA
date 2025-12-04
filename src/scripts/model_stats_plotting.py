@@ -29,7 +29,7 @@ def inference_from_csvs(rundir):
                 inference_time_ms.append(None)
     return inference_time_ms
 
-def collect_results(run_dir:pathlib.Path, psu_dc_volts=5.0, r_shunt=0.1):
+def collect_results(run_dir:pathlib.Path, psu_dc_volts=5.0, r_shunt=0.2):
     """
     Collects primary results of digital and analog Saleae results into a dict for ease of use.
     Point to directory that directly parents the .CSVs
@@ -44,7 +44,7 @@ def collect_results(run_dir:pathlib.Path, psu_dc_volts=5.0, r_shunt=0.1):
             continue
         if parsed.avg_inference_time() is not None:
             avg_time = parsed.avg_inference_time() * 1e3  # ms
-            mean_pwr, all_pwr, mean_energy, all_energy = parsed.avg_power_measurement(
+            mean_pwr, std_pwr, mean_energy, all_energy = parsed.avg_power_measurement(
                 psu_dc_volts, r_shunt
             )
             # only add if both digital+analog are present
@@ -135,7 +135,7 @@ def make_combined_latency_figure(names, param_counts, accuracy, measured, quoted
             axes[2].text(x_pos[i], q , f"{q:.1f}", ha="center", va="bottom", fontsize=14)
             axes[2].text(x_pos[i], m , f"{m:.1f}", ha="center", va="bottom", fontsize=14)
 
-    axes[2].set_title("Measured vs Quoted Latency", fontsize=20)
+    axes[2].set_title("Quoted vs Measured Latency", fontsize=20)
     axes[2].set_ylabel("ms", fontsize=18)
     axes[2].set_ylim(0, max(measured.max(), quoted.max()) * 1.15)
     axes[2].legend()
@@ -378,16 +378,18 @@ class ModelStatsPlotting:
         # 1) Average Power
         axes[0].bar(x_pos, power, color=colors)
         axes[0].set_title("Average Power", fontsize=22)
-        axes[0].set_ylabel("mW", fontsize=18)
-        axes[0].set_ylim(0,100)
+        axes[0].set_ylabel("mW", fontsize=20)
+        axes[0].set_ylim(0,1200)
+        axes[0].tick_params(axis="y", labelsize=20)
         for i, p in enumerate(power):
             axes[0].text(x_pos[i], p * 1.01, f"{p:.1f}", ha="center", va="bottom", fontsize=16)
 
         # 2) Energy per Inference
         axes[1].bar(x_pos, energy, color=colors)
         axes[1].set_title("Energy per Inference", fontsize=22)
-        axes[1].set_ylabel("mJ", fontsize=18)
-        axes[1].set_ylim(0,5)
+        axes[1].set_ylabel("mJ", fontsize=20)
+        axes[1].set_ylim(0,60)
+        axes[1].tick_params(axis="y", labelsize=20)
         for i, e in enumerate(energy):
             axes[1].text(x_pos[i], e * 1.01, f"{e:.1f}", ha="center", va="bottom", fontsize=16)
 
@@ -399,43 +401,126 @@ class ModelStatsPlotting:
             if m >= q:
                 # Quoted bar at bottom, then delta stacked on top
                 axes[2].bar(x_pos[i], q, color=base_color, label="Quoted" if i == 0 else "")
-                axes[2].bar(x_pos[i], m - q, bottom=q, color=light, label="Measured Δ" if i == 0 else "")
+                axes[2].bar(x_pos[i], m - q, bottom=q, color=light, label="Measured" if i == 0 else "")
             else:
                 # Measured shorter: put quoted baseline, then negative delta
                 axes[2].bar(x_pos[i], m, color=light, label="Measured" if i == 0 else "")
-                axes[2].bar(x_pos[i], q - m, bottom=m, color=base_color, label="Quoted Δ" if i == 0 else "")
+                axes[2].bar(x_pos[i], q - m, bottom=m, color=base_color, label="Quoted" if i == 0 else "")
 
-            axes[2].text(x_pos[i], m * 1.01, f"{m:.1f}", ha="center", va="bottom", fontsize=16)
-            axes[2].text(x_pos[i], q * 1.01, f"{q:.1f}", ha="center", va="bottom", fontsize=16)
+            axes[2].text(x_pos[i], m * 1.01, f"{m:.1f}", ha="center", va="bottom", fontsize=18)
+            axes[2].text(x_pos[i], q * 1.01, f"{q:.1f}", ha="center", va="bottom", fontsize=18)
 
-        axes[2].set_title("Latency (Measured vs Quoted)", fontsize=22)
-        axes[2].set_ylabel("ms", fontsize=18)
+        axes[2].set_title("Latency (Quoted vs Measured)", fontsize=22)
+        axes[2].set_ylabel("ms", fontsize=20)
         axes[2].set_ylim(0,60)
-        axes[2].legend()
+        axes[2].legend(fontsize=18)
+        axes[2].tick_params(axis="y", labelsize=20)
         # 4) Accuracy: measured vs quoted
         width = 0.4
         axes[3].bar(x_pos - width/2, acc_quoted, width=width,
-                    color=[lighten_color(c, 0.5) for c in colors], label="Quoted")
+                    color=colors, label="Quoted")
         axes[3].bar(x_pos + width/2, acc_measured, width=width,
-                    color=colors, label="Measured")
-        axes[3].set_title("Top-1 Accuracy (Measured vs Quoted)", fontsize=22)
-        axes[3].set_ylabel("%", fontsize=18)
+                    color=[lighten_color(c, 0.5) for c in colors], label="Measured")
+        axes[3].set_title("Top-1 Accuracy (Quoted vs Measured)", fontsize=22)
+        axes[3].set_ylabel("%", fontsize=20)
         axes[3].set_ylim(0, 100)
+        axes[3].tick_params(axis="y", labelsize=20)
         for i, (a_m, a_q) in enumerate(zip(acc_measured, acc_quoted)):
-            axes[3].text(x_pos[i] + width/2, a_m * 1.01, f"{a_m:.1f}",
-                        ha="center", va="bottom", fontsize=16)
-            axes[3].text(x_pos[i] - width/2, a_q * 1.01, f"{a_q:.1f}",
-                        ha="center", va="bottom", fontsize=16)
-        axes[3].legend()
+            axes[3].text(x_pos[i] + width/2, a_m * 1.01, f"{a_m:.0f}",
+                        ha="center", va="bottom", fontsize=18)
+            axes[3].text(x_pos[i] - width/2, a_q * 1.01, f"{a_q:.0f}",
+                        ha="center", va="bottom", fontsize=18)
+        axes[3].legend(fontsize=18)
 
         # Shared x labels
         axes[3].set_xticks(x_pos)
-        axes[3].set_xticklabels(names, rotation=45, ha="right", fontsize=18)
+        axes[3].set_xticklabels(names, rotation=30, ha="right", fontsize=20)
 
         plt.tight_layout()
         if filename:
             plt.savefig(filename, dpi=300, bbox_inches="tight")
             plt.close(fig)
+        else:
+            plt.show()
+
+        ## THE METRIC!!!
+        time_budget = 100 * np.max(measured_lat)
+        energy_budget = 100 * np.max(energy)
+
+        acc_frac = acc_measured / 100.0
+
+        time_correct = np.floor(time_budget / measured_lat) * acc_frac
+        energy_correct = np.floor(energy_budget / energy) * acc_frac
+        overall_correct = np.minimum(time_correct, energy_correct)
+
+        subset["Correct Inferences (Time budget)"] = time_correct
+        subset["Correct Inferences (Energy budget)"] = energy_correct
+        subset["Correct Inferences (Overall)"] = overall_correct
+
+        # Sort by overall feasible inferences
+        subset.sort_values("Correct Inferences (Overall)", ascending=True, inplace=True)
+        subset.reset_index(drop=True, inplace=True)
+
+        names = subset["Model name"].tolist()
+        x_pos = np.arange(len(names))
+        colors = [cmap(i) for i in range(len(names))]
+
+        fig2, axes2 = plt.subplots(nrows=3, ncols=1, sharex=True, figsize=(14, 12))
+
+        # correct inferences within energy budget
+        axes2[0].bar(x_pos, subset["Correct Inferences (Energy budget)"], color=colors)
+        axes2[0].set_title("Correct Inferences within Energy Budget", fontsize=22)
+        axes2[0].set_ylabel("# Inferences", fontsize=20)
+        axes2[0].tick_params(axis="y", labelsize=20)
+
+        energy_vals = subset["Correct Inferences (Energy budget)"].to_numpy()
+        for i, val in enumerate(energy_vals):
+            axes2[0].text(x_pos[i], val * 1.02, f"{int(val)}",
+                        ha="center", va="bottom", fontsize=18)
+        axes2[0].set_ylim(0, max(energy_vals) * 1.25)
+
+        # correct inferences within time budget
+        axes2[1].bar(x_pos, subset["Correct Inferences (Time budget)"], color=colors)
+        axes2[1].set_title("Correct Inferences within Time Budget", fontsize=22)
+        axes2[1].set_ylabel("# Inferences", fontsize=20)
+        axes2[1].tick_params(axis="y", labelsize=20)
+
+        time_vals = subset["Correct Inferences (Time budget)"].to_numpy()
+        for i, val in enumerate(time_vals):
+            axes2[1].text(x_pos[i], val * 1.02, f"{int(val)}",
+                        ha="center", va="bottom", fontsize=18)
+        axes2[1].set_ylim(0, max(time_vals) * 1.25)
+        
+        # overall correct inferences (feasible)
+        axes2[2].bar(x_pos, subset["Correct Inferences (Overall)"], color=colors)
+        axes2[2].set_title("Overall Correct Inferences (min of Time/Energy)", fontsize=22)
+        axes2[2].set_ylabel("# Inferences", fontsize=20)
+        axes2[2].tick_params(axis="y", labelsize=20)
+        axes2[2].set_xticks(x_pos)
+        axes2[2].set_xticklabels(names, rotation=30, ha="right", fontsize=20)
+
+        time_vals = subset["Correct Inferences (Time budget)"].to_numpy()
+        energy_vals = subset["Correct Inferences (Energy budget)"].to_numpy()
+        overall_vals = subset["Correct Inferences (Overall)"].to_numpy()
+
+        x_positions = np.arange(len(names))
+
+        # Decide which budget limited each model
+        limiting = ["Time" if t < e else "Energy" for t, e in zip(time_vals, energy_vals)]
+
+        for x, y, lim in zip(x_positions, overall_vals, limiting):
+            axes2[2].text(x, y * 1.05, lim,
+                        ha="center", va="bottom",
+                        fontsize=14, fontweight="bold")
+
+        # Expand ylim to leave room for labels
+        axes2[2].set_ylim(0, max(overall_vals) * 1.25)
+    
+        plt.tight_layout()
+        if filename:
+            outpath = str(pathlib.Path(filename).with_name("budgeted_correct_inferences.png"))
+            plt.savefig(outpath, dpi=300, bbox_inches="tight")
+            plt.close(fig2)
         else:
             plt.show()
 
@@ -532,12 +617,23 @@ if __name__ == "__main__":
     # plots.segmentation_plt()
 
     # Select the runs you want to visualize
-    run_names = ["EfficientNet-EdgeTpu (M)", "EfficientNet-EdgeTpu (S)", "Inception V2", "MobileNet V1 (0.25)"]
-
+    run_names=[
+        "EfficientNet-EdgeTpu (M)",
+        "EfficientNet-EdgeTpu (S)",
+        #"Inception V1",
+        "MobileNet V1 (0.25)",
+        #"MobileNet V1 (0.50)",
+        "MobileNet V1 (.75)",
+        "MobileNet V1 (1.0)",
+        #"MobileNet V1 (TF_ver_2.0)",
+        #"MobileNet V2",
+        "MobileNet V2 (TF_ver_2.0)",
+        #"MobileNet V3"
+    ]
     # Call the method that already merges Excel + Saleae results
     subset = plots.power_inf_runs(
         df=None,
-        results_dir= (REPO_ROOT / "results/captures/img_class_runs"),
+        results_dir= (REPO_ROOT / "results/captures/IMG_CLASS02"),
         model_category="Img_Class",
         run_names=run_names,
         filename=REPO_ROOT / "results/plots/img_class_power_runs.png"

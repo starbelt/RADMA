@@ -8,54 +8,116 @@ energy per inference
 
 import numpy as np
 import pandas as pd
+from scipy.signal import savgol_filter
 import pathlib, os
 from path_utils import get_repo_root
 import matplotlib.pyplot as plt
 
 # helpers and diagnostic plots
-def plot_saleae_trace(directory, psu_voltage=5.0, r_shunt=0.1, plot_energy_bars=True):
+def plot_saleae_trace(directory, psu_voltage=5.0, r_shunt=0.2, plot_energy_bars=True):
     parser = SaleaeOutputParsing(directory)
-    
-    # Zoom to first 0.12 seconds
-    mask = parser.t_analog <= 0.12
+    zoom_s = 0.2
+
+    # ---- Analog current + power
+    mask = parser.t_analog <= zoom_s
     t = parser.t_analog[mask]
     v1 = parser.v1[mask]
     v2 = parser.v2[mask]
-    
-    current = (v1 - v2) / r_shunt  # Amps
-    power = current * psu_voltage  # Watts
-    
-    # Incremental energy per sample
+
+    current = (v1 - v2) / r_shunt   # A
+    power = current * psu_voltage   # W
+
+    # Energy increments + cumulative
     dt = np.diff(t, prepend=t[0])
-    incremental_energy = current * psu_voltage * dt  # Joules per slice
-    
-    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(14, 8), sharex=True)
-    
-    # --- Voltage traces ---
-    ax1.plot(t, v1, label="V1 (before shunt)")
-    ax1.plot(t, v2, label="V2 (after shunt)")
-    ax1.set_ylabel("Voltage [V]",fontsize=18)
-    ax1.set_title("Voltage Traces",fontsize=20)
-    ax1.grid(True)
-    ax1.legend(loc="upper right")
-    
-    # --- Current trace with incremental energy ---
-    ax2.plot(t, current, color="C0", label="Current [A]")
-    ax2.bar(t, incremental_energy / incremental_energy.max() * current.max(),
-            width=dt, alpha=0.3, color="C1", label="Incremental Energy (scaled)")
-    ax2.set_xlabel("Time [s]",fontsize=18)
-    ax2.set_ylabel("Current [A]",fontsize=18)
-    ax2.set_title("Current Trace with Incremental Energy Overlay",fontsize=20)
-    ax2.grid(True)
-    # Clean up legend duplicates
-    handles, labels = ax2.get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    ax2.legend(by_label.values(), by_label.keys(), loc="upper right")
-    fig.suptitle(directory.name,fontsize=24)
+    incr_energy = power * dt   # J
+    cum_energy = np.cumsum(incr_energy)   # J
+
+    # ---- Digital
+    d_mask = parser.t_digital <= zoom_s
+    t_d = parser.t_digital[d_mask]
+    d = parser.d[d_mask]
+
+    # Scale digital to overlay on current trace
+    digital_scaled = d * (current.max() * 0.5)
+
+    # ---- Plot
+    fig, ax = plt.subplots(figsize=(20, 8))
+
+    # Current trace
+    ax.plot(t * 1e3, current, color="C0", label="Current [A]")
+
+    # Incremental energy shading (optional visual)
+    if plot_energy_bars:
+        ax.bar(t * 1e3,
+               incr_energy / incr_energy.max() * current.max(),
+               width=dt * 1e3, alpha=0.3, color="C1", label="Energy")
+
+    # Digital overlay
+    ax.step(t_d * 1e3, digital_scaled, where="post",
+            color="C2", linewidth=2, label="Digital signal")
+
+    ax.set_xlabel("Time [ms]", fontsize=20)
+    ax.set_ylabel("Current [A]", fontsize=20)
+    ax.tick_params(axis="both", labelsize=18)
+    ax.set_title(f"Saleae Trace: {directory.name}", fontsize=24)
+    ax.grid(True)
+
+    # ---- Secondary axis for cumulative energy
+    ax2 = ax.twinx()
+    ax2.plot(t * 1e3, cum_energy * 1e3, color="C3", linewidth=2, label="Cumulative Energy")
+    ax2.set_ylabel("Energy [mJ]", fontsize=20)
+    ax2.tick_params(axis="y", labelsize=18)
+
+    # Combined legend
+    handles, labels = ax.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    by_label = dict(zip(labels + labels2, handles + handles2))
+    ax.legend(by_label.values(), by_label.keys(), loc="upper left", fontsize=22)
+
     plt.tight_layout()
-    plt.savefig("Diagnostic_Trace_.png", dpi=300, bbox_inches="tight")
-
-
+    plt.savefig("Diagnostic_Trace_with_EnergyAxis.png", dpi=300, bbox_inches="tight")
+    plt.show()
+# def plot_saleae_trace(directory, psu_voltage=5.0, r_shunt=0.1, plot_energy_bars=True):
+#     parser = SaleaeOutputParsing(directory)
+    
+#     # Zoom to first 0.12 seconds
+#     mask = parser.t_analog <= 0.12
+#     t = parser.t_analog[mask]
+#     v1 = parser.v1[mask]
+#     v2 = parser.v2[mask]
+    
+#     current = (v1 - v2) / r_shunt  # Amps
+#     power = current * psu_voltage  # Watts
+    
+#     # Incremental energy per sample
+#     dt = np.diff(t, prepend=t[0])
+#     incremental_energy = current * psu_voltage * dt  # Joules per slice
+    
+#     fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(14, 8), sharex=True)
+    
+#     # --- Voltage traces ---
+#     ax1.plot(t, v1, label="V1 (before shunt)")
+#     ax1.plot(t, v2, label="V2 (after shunt)")
+#     ax1.set_ylabel("Voltage [V]",fontsize=18)
+#     ax1.set_title("Voltage Traces",fontsize=20)
+#     ax1.grid(True)
+#     ax1.legend(loc="upper right")
+    
+#     # --- Current trace with incremental energy ---
+#     ax2.plot(t, current, color="C0", label="Current [A]")
+#     ax2.bar(t, incremental_energy / incremental_energy.max() * current.max(),
+#             width=dt, alpha=0.3, color="C1", label="Incremental Energy (scaled)")
+#     ax2.set_xlabel("Time [s]",fontsize=18)
+#     ax2.set_ylabel("Current [A]",fontsize=18)
+#     ax2.set_title("Current Trace with Incremental Energy Overlay",fontsize=20)
+#     ax2.grid(True)
+#     # Clean up legend duplicates
+#     handles, labels = ax2.get_legend_handles_labels()
+#     by_label = dict(zip(labels, handles))
+#     ax2.legend(by_label.values(), by_label.keys(), loc="upper right")
+#     fig.suptitle(directory.name,fontsize=24)
+#     plt.tight_layout()
+#     plt.savefig("Diagnostic_Trace_.png", dpi=300, bbox_inches="tight")
 
 class SaleaeOutputParsing:
     def __init__(self, data_directory=None):
@@ -191,69 +253,62 @@ class SaleaeOutputParsing:
             raise Exception("There are no valid inferences")
         else:
             return np.mean(self.inf_times)
+        
+    def avg_power_measurement(self, psu_dc_volts: float = 5.0, r_shunt: float = 1.0, subtract_idle: bool = False):
+            """Compute average power and energy during inference windows"""
 
-    def avg_power_measurement(self, psu_dc_volts: float = 5.0, r_shunt: float = 0.1, subtract_idle: bool = True):
-        """
-        Compute average power and energy only during inference windows.
-        If subtract_idle=True, idle baseline is subtracted only inside those windows.
-        """
+            if self.v1 is None or self.v2 is None or self.t_analog is None:
+                raise Exception("No analog file output")
+            if len(self.v1) == 0 or len(self.v2) == 0 or len(self.t_analog) == 0:
+                raise Exception("Analog arrays empty")
 
-        if self.v1 is None or self.v2 is None or self.t_analog is None:
-            raise Exception("No analog file output")
-        if len(self.v1) == 0 or len(self.v2) == 0 or len(self.t_analog) == 0:
-            raise Exception("Analog arrays empty")
+            v_shunt = self.v1 - self.v2
+            v_device = psu_dc_volts - v_shunt
+            I = v_shunt / r_shunt
 
-        # Current/voltage/power for whole trace
-        v_shunt = self.v1 - self.v2
-        v_device = psu_dc_volts - v_shunt
-        I = v_shunt / r_shunt
-        p_inst_raw = v_device * I  # Watts
-
-        # Load idle baseline if requested
-        idle = 0.0
-        if subtract_idle:
-            if self.idle_power is None:
-                self.find_idle_power()
-            idle = self.idle_power if self.idle_power is not None else 0.0
-
-        # Bail out if we don’t have inference windows
-        if self.rising is None or self.falling is None:
-            return None, None, None, None
-
-        avg_powers = []
-        energies = []
-
-        for t_start, t_end in zip(self.rising, self.falling):
-            mask = (self.t_analog >= t_start) & (self.t_analog <= t_end)
-            if not mask.any():
-                continue
-
-            t_window = self.t_analog[mask]
-            p_window = p_inst_raw[mask]
-
-            # subtract idle only inside the spike
+            # If subtract_idle=True, try to subtract cached idle
+            idle = 0.0
             if subtract_idle:
-                p_window = p_window - idle
+                if self.idle_power is None:
+                    # Load from CSV, but don't recurse into avg_power_measurement()
+                    self.find_idle_power()
+                idle = self.idle_power if self.idle_power is not None else 0.0
 
-            # integrate to energy [J]
-            energy = np.trapz(p_window, t_window)
-            duration = t_window[-1] - t_window[0]
+            print(f"v_device * I = {v_device * I}, idle = {idle}")
 
-            if duration > 0:
-                avg_powers.append(energy / duration)
-                energies.append(energy)
+            p_inst = v_device * I - 0*idle
 
-        # report only inference-window results
-        mean_power = np.mean(avg_powers) if avg_powers else None
-        mean_energy = np.mean(energies) if energies else None
+            if self.rising is None or self.falling is None:
+                mean_power = np.mean(p_inst)
+                return mean_power, None, None, None
 
-        return mean_power, np.array(avg_powers), mean_energy, np.array(energies)
-    
-    
+            avg_powers = []
+            energies = []
+
+            for t_start, t_end in zip(self.rising, self.falling):
+                mask = (self.t_analog >= t_start) & (self.t_analog <= t_end)
+                if not mask.any():
+                    continue
+
+                t_window = self.t_analog[mask]
+                p_window = p_inst[mask]
+
+                energy = np.trapezoid(p_window, t_window)   # Joules
+                duration = t_window[-1] - t_window[0]
+
+                if duration > 0:
+                    avg_powers.append(energy / duration)
+                    energies.append(energy)
+
+            mean_power = np.mean(avg_powers) if avg_powers else None
+            mean_energy = np.mean(energies) if energies else None
+
+            return mean_power, np.array(avg_powers), mean_energy, np.array(energies)
+
 if __name__ == "__main__":
     REPO_ROOT = get_repo_root()
     
-    plot_saleae_trace(REPO_ROOT/"results/captures/idle_power", psu_voltage=5.0, r_shunt=0.1, plot_energy_bars=True)
+    plot_saleae_trace(REPO_ROOT/"results/captures/IMG_CLASS02/EfficientNet-EdgeTpu (S)", psu_voltage=5.0, r_shunt=0.2, plot_energy_bars=True)
 
     # r_shunt = 0.1  # ohms
     # parser = SaleaeOutputParsing()  # defaults to cwd
