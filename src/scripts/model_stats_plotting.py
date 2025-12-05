@@ -443,65 +443,90 @@ class ModelStatsPlotting:
         else:
             plt.show()
 
-        ## THE METRIC!!!
-        time_budget = 100 * np.max(measured_lat)
-        energy_budget = 100 * np.max(energy)
 
-        acc_frac = acc_measured / 100.0
+
+        return subset
+
+    def budgeted_correct_inferences(self, df, buffer_energy, frame_time,results_dir: pathlib.Path,
+                    model_category=None, run_names=None, filename=None):
+        
+        # Prepare arrays
+        names = df["Model name"].tolist()
+        power = df["Average Power (mW)"].to_numpy()
+        energy = df["Energy per Inference (mJ)"].to_numpy()*1e-3  # convert to joules
+        measured_lat = df["Measured Inference Time (ms)"].to_numpy()*1e-3 # convert to seconds
+        print(measured_lat)
+        quoted_lat = df["Latency (ms)"].to_numpy()
+        acc_measured = df["Top-1 Accuracy (measured)"].to_numpy()
+        acc_quoted = df["Top-1 Accuracy"].to_numpy()
+
+        ## Buffers
+        energy_budget = buffer_energy
+
+
+        ## Time Calculation
+        time_budget = frame_time
+
+        ## THE METRIC!!!
+        
+        acc_frac = acc_measured / 100.0 # revisit with recall
 
         time_correct = np.floor(time_budget / measured_lat) * acc_frac
         energy_correct = np.floor(energy_budget / energy) * acc_frac
         overall_correct = np.minimum(time_correct, energy_correct)
 
-        subset["Correct Inferences (Time budget)"] = time_correct
-        subset["Correct Inferences (Energy budget)"] = energy_correct
-        subset["Correct Inferences (Overall)"] = overall_correct
+        df["Correct Inferences (Time budget)"] = time_correct
+        df["Correct Inferences (Energy budget)"] = energy_correct
+        df["Correct Inferences (Overall)"] = overall_correct
 
         # Sort by overall feasible inferences
-        subset.sort_values("Correct Inferences (Overall)", ascending=True, inplace=True)
-        subset.reset_index(drop=True, inplace=True)
+        df.sort_values("Correct Inferences (Overall)", ascending=True, inplace=True)
+        df.reset_index(drop=True, inplace=True)
 
-        names = subset["Model name"].tolist()
+        names = df["Model name"].tolist()
         x_pos = np.arange(len(names))
+        cmap = matplotlib.colormaps["tab10"]
         colors = [cmap(i) for i in range(len(names))]
 
         fig2, axes2 = plt.subplots(nrows=3, ncols=1, sharex=True, figsize=(14, 12))
 
+
+        ## Plotting  for Metric (Buffers vs Time)
         # correct inferences within energy budget
-        axes2[0].bar(x_pos, subset["Correct Inferences (Energy budget)"], color=colors)
+        axes2[0].bar(x_pos, df["Correct Inferences (Energy budget)"], color=colors)
         axes2[0].set_title("Correct Inferences within Energy Budget", fontsize=22)
         axes2[0].set_ylabel("# Inferences", fontsize=20)
         axes2[0].tick_params(axis="y", labelsize=20)
 
-        energy_vals = subset["Correct Inferences (Energy budget)"].to_numpy()
+        energy_vals = df["Correct Inferences (Energy budget)"].to_numpy()
         for i, val in enumerate(energy_vals):
             axes2[0].text(x_pos[i], val * 1.02, f"{int(val)}",
                         ha="center", va="bottom", fontsize=18)
-        axes2[0].set_ylim(0, max(energy_vals) * 1.25)
+        #axes2[0].set_ylim(0, max(energy_vals) * 1.25)
 
         # correct inferences within time budget
-        axes2[1].bar(x_pos, subset["Correct Inferences (Time budget)"], color=colors)
+        axes2[1].bar(x_pos, df["Correct Inferences (Time budget)"], color=colors)
         axes2[1].set_title("Correct Inferences within Time Budget", fontsize=22)
         axes2[1].set_ylabel("# Inferences", fontsize=20)
         axes2[1].tick_params(axis="y", labelsize=20)
 
-        time_vals = subset["Correct Inferences (Time budget)"].to_numpy()
+        time_vals = df["Correct Inferences (Time budget)"].to_numpy()
         for i, val in enumerate(time_vals):
             axes2[1].text(x_pos[i], val * 1.02, f"{int(val)}",
                         ha="center", va="bottom", fontsize=18)
         axes2[1].set_ylim(0, max(time_vals) * 1.25)
         
         # overall correct inferences (feasible)
-        axes2[2].bar(x_pos, subset["Correct Inferences (Overall)"], color=colors)
+        axes2[2].bar(x_pos, df["Correct Inferences (Overall)"], color=colors)
         axes2[2].set_title("Overall Correct Inferences (min of Time/Energy)", fontsize=22)
         axes2[2].set_ylabel("# Inferences", fontsize=20)
         axes2[2].tick_params(axis="y", labelsize=20)
         axes2[2].set_xticks(x_pos)
         axes2[2].set_xticklabels(names, rotation=30, ha="right", fontsize=20)
 
-        time_vals = subset["Correct Inferences (Time budget)"].to_numpy()
-        energy_vals = subset["Correct Inferences (Energy budget)"].to_numpy()
-        overall_vals = subset["Correct Inferences (Overall)"].to_numpy()
+        time_vals = df["Correct Inferences (Time budget)"].to_numpy()
+        energy_vals = df["Correct Inferences (Energy budget)"].to_numpy()
+        overall_vals = df["Correct Inferences (Overall)"].to_numpy()
 
         x_positions = np.arange(len(names))
 
@@ -524,7 +549,23 @@ class ModelStatsPlotting:
         else:
             plt.show()
 
-        return subset
+        # Determine overall winner
+        best_idx = df["Correct Inferences (Overall)"].idxmax()
+        best_row = df.iloc[best_idx]
+
+        # Determine what limited the winner
+        best_limiting = (
+            "Time" if best_row["Correct Inferences (Time budget)"] 
+                    < best_row["Correct Inferences (Energy budget)"] 
+            else "Energy"
+        )
+
+        # Build return string
+        winner_string = f"{best_row['Model name']} (Limiting: {best_limiting})"
+
+        return winner_string
+
+
         def obj_det_plt(self):
             """Triple Stacked Bar Chart of Model Stats for Object Detection"""
             model_dir = REPO_ROOT / "data/models/Object_Detection"
@@ -609,13 +650,17 @@ if __name__ == "__main__":
     REPO_ROOT = get_repo_root()
 
     plots = ModelStatsPlotting(
-    REPO_ROOT / "src/scripts/Model_Stats.xlsx",
+    REPO_ROOT / "data/Model_Stats.xlsx",
     REPO_ROOT / "results/plots/"
     )
+
+    ## Baseline Model Parameter Plotting
     #plots.img_class_plt()
     #plots.obj_det_plt()
     # plots.segmentation_plt()
 
+
+    ## Experimental Power + Inference Plotting
     # Select the runs you want to visualize
     run_names=[
         "EfficientNet-EdgeTpu (M)",
@@ -631,6 +676,7 @@ if __name__ == "__main__":
         #"MobileNet V3"
     ]
     # Call the method that already merges Excel + Saleae results
+    print("[INFO] Generating power and inference plots...")
     subset = plots.power_inf_runs(
         df=None,
         results_dir= (REPO_ROOT / "results/captures/IMG_CLASS02"),
@@ -639,8 +685,53 @@ if __name__ == "__main__":
         filename=REPO_ROOT / "results/plots/img_class_power_runs.png"
     )
 
-    print(subset["Model name"].tolist())
+    ## Budgeted Correct Inferences Plotting
+    print("[INFO] Generating budgeted correct inferences plots...")
 
+    def Energy_in_Cap(C,V):
+        return 0.5 * C * V * V  # joules
+    def Frame_Time(H_m, FOV_deg):
+        R_E = 6371e3  # m
+        mu_E = 3.986e14  # m^3/s^2
+        R = H_m + R_E
+        V_SAT = (mu_E / R) ** 0.5  # m/s
+        FOV_rad = np.deg2rad(FOV_deg)
+        Res= 2 * H_m * np.tan(FOV_rad / 2)
+        GT = Res / V_SAT  # sec
+        return GT
+    
+    # Somewhat arbitrary combinations of buffer sizes and frame times
+    capcitances = [10e-3, 1e-1, 1, 5.6, 8]; # F
+    H = [600e3,600e3, 600e3, 600e3, 600e3]; # m
+    FOV = [60, 45, 30, 15, 5]; # degrees
+
+    # Generate Budgets
+    buffers  = [Energy_in_Cap(C,5) for C in capcitances]  # joules
+    frame_times = [Frame_Time(H[i], FOV[i]) for i in range(len(H))]  # sec
+
+    matrix_winner = np.zeros((len(buffers), len(frame_times)), dtype=object)
+
+    # Test all combinations
+    for i, buffer in enumerate(buffers):
+        for j, frame_time in enumerate(frame_times):
+
+            matrix_winner[i, j] = plots.budgeted_correct_inferences(
+                df=subset,
+                buffer_energy=buffer,     # use actual buffer
+                frame_time=frame_time,    # use actual frame time
+                results_dir=(REPO_ROOT / "results/captures/IMG_CLASS02"),
+                model_category="Img_Class",
+                run_names=run_names,
+                filename=REPO_ROOT / "results/plots/img_class_power_runs.png"
+            )
+    
+    df_winner = pd.DataFrame(
+        matrix_winner,
+        index=buffers,
+        columns=frame_times
+    )
+
+    df_winner.to_excel("winner_matrix.xlsx")
 
 # run_names=["EfficientNet-EdgeTpu (L)",
 #     "EfficientNet-EdgeTpu (M)",
