@@ -561,7 +561,7 @@ class ModelStatsPlotting:
         )
 
         # Build return string
-        winner_string = f"{best_row['Model name']} (Limiting: {best_limiting})"
+        winner_string = f"{best_row['Model name']} ({max(overall_vals)} correct inferences)"
 
         return winner_string
 
