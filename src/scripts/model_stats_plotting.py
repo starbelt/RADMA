@@ -467,6 +467,7 @@ class ModelStatsPlotting:
         ## Time Calculation
         time_budget = frame_time
 
+
         ## THE METRIC!!!
         
         acc_frac = acc_measured / 100.0 # revisit with recall
@@ -561,9 +562,50 @@ class ModelStatsPlotting:
         )
 
         # Build return string
-        winner_string = f"{best_row['Model name']} ({max(overall_vals)} correct inferences)"
+        winner_string = f"{best_row['Model name']} ({max(overall_vals)} correct inferences) limited by {best_limiting}"
 
         return winner_string
+    
+    def budget_correct_loop(self, df, buffers, frame_times,results_dir: pathlib.Path , filename="all_grids.xlsx"): 
+        """
+        Loop through all of the models and create a 5x5 sweep of what the model performance against each budget combo might be"""
+        # Prepare arrays
+        names = df["Model name"].tolist()
+        energy = df["Energy per Inference (mJ)"].to_numpy()*1e-3  # convert to joules
+        measured_lat = df["Measured Inference Time (ms)"].to_numpy()*1e-3 # convert to seconds  
+        acc_measured = df["Top-1 Accuracy (measured)"].to_numpy()
+        acc_frac = acc_measured / 100.0 # percent to decimal
+
+        i=0;j=0;grid_out = np.empty((len(buffers), len(frame_times)), dtype=object)
+        for name in names:
+            print(f"Processing model: {name}")
+            for energy_buffer in buffers:
+                for frame_time in frame_times:
+                    # Calculate inferences in budgets
+                    time_correct = np.floor(frame_time / measured_lat) * acc_frac # correct inferences within time budget
+                    energy_correct = np.floor(energy_buffer / energy) * acc_frac # correct inferences within energy budget
+                    
+                    # save to dataframe
+                    df["Correct Inferences (Time budget)"] = time_correct
+                    df["Correct Inferences (Energy budget)"] = energy_correct
+
+                    correct, limiter = (
+                        (df["Correct Inferences (Time budget)"],"Time") if df["Correct Inferences (Time budget)"] 
+                                < df["Correct Inferences (Energy budget)"] 
+                        else (df["Correct Inferences (Energy budget)"],"Energy")
+                    )
+                    # Build return string
+                    grid_out[i,j] = f"{name} ({correct} correct inferences) limited by {limiter}"
+                    i+=1
+                j+=1
+            df_grids = pd.DataFrame(
+            grid_out,
+            index=buffers,
+            columns=frame_times,
+            )
+            df_grids.to_excel(results_dir / filename,sheet_name=name)
+
+        return
 
 
         def obj_det_plt(self):
@@ -709,29 +751,31 @@ if __name__ == "__main__":
     buffers  = [Energy_in_Cap(C,5) for C in capcitances]  # joules
     frame_times = [Frame_Time(H[i], FOV[i]) for i in range(len(H))]  # sec
 
-    matrix_winner = np.zeros((len(buffers), len(frame_times)), dtype=object)
+    plots.budget_correct_loop(subset, buffers.sort(),frame_times.sort() ,REPO_ROOT/ "results")
 
-    # Test all combinations
-    for i, buffer in enumerate(buffers):
-        for j, frame_time in enumerate(frame_times):
+    # matrix_winner = np.zeros((len(buffers), len(frame_times)), dtype=object)
 
-            matrix_winner[i, j] = plots.budgeted_correct_inferences(
-                df=subset,
-                buffer_energy=buffer,     # use actual buffer
-                frame_time=frame_time,    # use actual frame time
-                results_dir=(REPO_ROOT / "results/captures/IMG_CLASS02"),
-                model_category="Img_Class",
-                run_names=run_names,
-                filename=REPO_ROOT / "results/plots/img_class_power_runs.png"
-            )
+    # # Test all combinations
+    # for i, buffer in enumerate(buffers):
+    #     for j, frame_time in enumerate(frame_times):
+
+    #         matrix_winner[i, j] = plots.budgeted_correct_inferences(
+    #             df=subset,
+    #             buffer_energy=buffer,     # use actual buffer
+    #             frame_time=frame_time,    # use actual frame time
+    #             results_dir=(REPO_ROOT / "results/captures/IMG_CLASS02"),
+    #             model_category="Img_Class",
+    #             run_names=run_names,
+    #             filename=REPO_ROOT / "results/plots/img_class_power_runs.png"
+    #         )
     
-    df_winner = pd.DataFrame(
-        matrix_winner,
-        index=buffers,
-        columns=frame_times
-    )
+    # df_winner = pd.DataFrame(
+    #     matrix_winner,
+    #     index=buffers,
+    #     columns=frame_times
+    # )
 
-    df_winner.to_excel("winner_matrix.xlsx")
+    # df_winner.to_excel("winner_matrix.xlsx")
 
 # run_names=["EfficientNet-EdgeTpu (L)",
 #     "EfficientNet-EdgeTpu (M)",
