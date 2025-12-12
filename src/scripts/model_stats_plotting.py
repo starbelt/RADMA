@@ -566,46 +566,65 @@ class ModelStatsPlotting:
 
         return winner_string
     
-    def budget_correct_loop(self, df, buffers, frame_times,results_dir: pathlib.Path , filename="all_grids.xlsx"): 
+    def budget_correct_loop(self, df: pd.DataFrame, buffers: list, frame_times: list, results_dir: pathlib.Path, filename="all_grids.xlsx"): 
         """
-        Loop through all of the models and create a 5x5 sweep of what the model performance against each budget combo might be"""
-        # Prepare arrays
-        names = df["Model name"].tolist()
-        energy = df["Energy per Inference (mJ)"].to_numpy()*1e-3  # convert to joules
-        measured_lat = df["Measured Inference Time (ms)"].to_numpy()*1e-3 # convert to seconds  
-        acc_measured = df["Top-1 Accuracy (measured)"].to_numpy()
-        acc_frac = acc_measured / 100.0 # percent to decimal
+        Loop through all models and create a sweep of performance against budget combos.
+        Saves each model's grid as a separate sheet in the Excel file.
+        """
+        # Ensure directory exists
+        results_dir.mkdir(parents=True, exist_ok=True)
+        output_path = results_dir / filename
 
-        i=0;j=0;grid_out = np.empty((len(buffers), len(frame_times)), dtype=object)
-        for name in names:
-            print(f"Processing model: {name}")
-            for energy_buffer in buffers:
-                for frame_time in frame_times:
-                    # Calculate inferences in budgets
-                    time_correct = np.floor(frame_time / measured_lat) * acc_frac # correct inferences within time budget
-                    energy_correct = np.floor(energy_buffer / energy) * acc_frac # correct inferences within energy budget
-                    
-                    # save to dataframe
-                    df["Correct Inferences (Time budget)"] = time_correct
-                    df["Correct Inferences (Energy budget)"] = energy_correct
+        # Use ExcelWriter to save multiple sheets to the same file
+        with pd.ExcelWriter(output_path) as writer:
+            
+            # iterate through each model individually
+            for _, row in df.iterrows():
+                name = row["Model name"]
+                print(f"Processing model: {name}")
 
-                    correct, limiter = (
-                        (df["Correct Inferences (Time budget)"],"Time") if df["Correct Inferences (Time budget)"] 
-                                < df["Correct Inferences (Energy budget)"] 
-                        else (df["Correct Inferences (Energy budget)"],"Energy")
-                    )
-                    # Build return string
-                    grid_out[i,j] = f"{name} ({correct} correct inferences) limited by {limiter}"
-                    i+=1
-                j+=1
-            df_grids = pd.DataFrame(
-            grid_out,
-            index=buffers,
-            columns=frame_times,
-            )
-            df_grids.to_excel(results_dir / filename,sheet_name=name)
+                # extract metrics for this specific model
+                energy_j = row["Energy per Inference (mJ)"] * 1e-3
+                latency_s = row["Measured Inference Time (ms)"] * 1e-3
+                acc_frac = row["Top-1 Accuracy (measured)"] / 100.0
 
-        return
+                # create a fresh grid for this model (Rows: Buffers, Cols: Times)
+                grid_out = np.empty((len(buffers), len(frame_times)), dtype=object)
+
+                for i, energy_buffer in enumerate(buffers):
+                    for j, frame_time in enumerate(frame_times):
+                        
+                        # Calculate max possible inferences 
+                        count_time_limited = frame_time / latency_s
+                        count_energy_limited = energy_buffer / energy_j
+
+                        # Calculate correct 
+                        correct_time = int(count_time_limited * acc_frac)
+                        correct_energy = int(count_energy_limited * acc_frac)
+
+                        # Determine which budget limits inference
+                        if correct_time < correct_energy:
+                            final_correct = correct_time
+                            limiter = "Time"
+                        else:
+                            final_correct = correct_energy
+                            limiter = "Energy"
+
+                        # Format string for the cell
+                        grid_out[i, j] = f"{final_correct} correct ({limiter})"
+
+                # Create DataFrame for this model's grid
+                df_grid = pd.DataFrame(
+                    grid_out,
+                    index=[f"Energy: {np.round(b,2)}J" for b in buffers],
+                    columns=[f"Time: {np.round(t,2)}s" for t in frame_times]
+                )
+
+                # Write to a sheet named after the model
+                safe_sheet_name = name[:31].replace(":", "-").replace("/", "-")
+                df_grid.to_excel(writer, sheet_name=safe_sheet_name)
+
+        print(f"File saved successfully to {output_path}")
 
 
         def obj_det_plt(self):
@@ -683,7 +702,6 @@ class ModelStatsPlotting:
 
             make_figure(titles,model_names,values,units,self.plotdir+"/segmentation_plot.png")
 
-
     def power_analog_trace(self):
         pass
 
@@ -709,12 +727,12 @@ if __name__ == "__main__":
         "EfficientNet-EdgeTpu (S)",
         #"Inception V1",
         "MobileNet V1 (0.25)",
-        #"MobileNet V1 (0.50)",
+        "MobileNet V1 (0.50)",
         "MobileNet V1 (.75)",
         "MobileNet V1 (1.0)",
         #"MobileNet V1 (TF_ver_2.0)",
-        #"MobileNet V2",
-        "MobileNet V2 (TF_ver_2.0)",
+        "MobileNet V2",
+        #"MobileNet V2 (TF_ver_2.0)",
         #"MobileNet V3"
     ]
     # Call the method that already merges Excel + Saleae results
@@ -745,13 +763,17 @@ if __name__ == "__main__":
     # Somewhat arbitrary combinations of buffer sizes and frame times
     capcitances = [10e-3, 1e-1, 1, 5.6, 8]; # F
     H = [600e3,600e3, 600e3, 600e3, 600e3]; # m
-    FOV = [60, 45, 30, 15, 5]; # degrees
+    FOV = [45, 30, 15, 5, 2.5]; # degrees
 
     # Generate Budgets
     buffers  = [Energy_in_Cap(C,5) for C in capcitances]  # joules
     frame_times = [Frame_Time(H[i], FOV[i]) for i in range(len(H))]  # sec
 
-    plots.budget_correct_loop(subset, buffers.sort(),frame_times.sort() ,REPO_ROOT/ "results")
+    # sort ascending
+    buffers.sort()
+    frame_times.sort()
+
+    plots.budget_correct_loop(subset, buffers,frame_times ,REPO_ROOT/ "results")
 
     # matrix_winner = np.zeros((len(buffers), len(frame_times)), dtype=object)
 
