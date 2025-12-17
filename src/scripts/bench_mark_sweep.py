@@ -20,7 +20,7 @@ def wait_for_serial(port: str, timeout=30):
     raise TimeoutError(f"Serial port {port} not found within {timeout}s")
 
 
-def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_dir : str, serial_port : str ,dc_volts_in : float, r_shunt :float):
+def test_model(model: pathlib.Path, model_dir: pathlib.Path, capture_dir : str, serial_port : str ,dc_volts_in : float, r_shunt :float, build:bool, test:bool):
     """
     Builds, flashes, and tests one model compiled for the edge TPU
     model: posix path of compiled model (should end in "_edgetpu.tflite")
@@ -41,26 +41,29 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
         f.write(f'#define MODEL_PATH "{device_path}"\n')
     category = model.relative_to(model_dir).parts[0]
 
-    # # Build & flash (cmake, make, then flash)
-    subprocess.run([
-        "cmake",
-        "-B", "out",
-        "-S", ".",
-        f"-DMODEL_PATH={host_path}"
-    ], check=True)
+    if build:
+        # # Build & flash (cmake, make, then flash)
+        subprocess.run([
+            "cmake",
+            "-B", "out",
+            "-S", ".",
+            f"-DMODEL_PATH={host_path}"
+        ], check=True)
 
-    subprocess.run(["make", "-C",
-        "out", "-j12", "VERBOSE=1"], check=True)
+        subprocess.run(["make", "-C",
+            "out", "-j12", "VERBOSE=1"], check=True)
 
-    subprocess.run([
-        "python3", "coralmicro/scripts/flashtool.py",
-        "--build_dir", "out",
-        "--elf_path", "out/coralmicro-app" #,"--nodata"
-    ], check=True)
+        subprocess.run([
+            "python3", "coralmicro/scripts/flashtool.py",
+            "--build_dir", "out",
+            "--elf_path", "out/coralmicro-app" #,"--nodata"
+        ], check=True)
 
-    # Give board time to boot
-    wait_for_serial(serial_port, timeout=30)
-    # time.sleep(30)  # extra settle time for TPU context
+        # Give board time to boot
+        wait_for_serial(serial_port, timeout=30)
+        # time.sleep(30)  # extra settle time for TPU context
+
+    if not test: return None, None, category, None
 
     # Prepare Saleae capture configs
     print("Preparing Logic Analyzer\n")
@@ -111,6 +114,7 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
 
 
 if __name__ == "__main__":
+    print("Parsing Args")
     parser = argparse.ArgumentParser(
         description="Run inference tests on EdgeTPU-compiled models with Saleae captures."
     )
@@ -118,13 +122,12 @@ if __name__ == "__main__":
         "models_dir",
         nargs="?",
         type=pathlib.Path,
-        default=pathlib.Path("~/Coral-TPU-Characterization/data/models/Image_Classification").expanduser(),
+        default=pathlib.Path("~/Coral-TPU-Characterization/data/models/edgeTPU_acc").expanduser(),
         help="Directory containing compiled EdgeTPU models (default: %(default)s)"
     )
     parser.add_argument(
         "--capture-dir",
         type=str,
-        default=None,
         help="Optional subdirectory for storing captures (default: None)"
     )
     parser.add_argument(
@@ -157,20 +160,28 @@ if __name__ == "__main__":
         default=0.1,
         help="Shunt resistance for power measurement (default: %(default)s Ω)"
     )
-
+    
     args = parser.parse_args()
 
-    MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/data/models/Object_Detection/SSDLite_MobileDet").expanduser() #args.models_dir
-    CAPTURE_DIR = args.capture_dir
+    print("assigning global variables")
+
+    MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/data/models/edgeTPU_hdw/A075D04").expanduser() #args.models_dir
+    CAPTURE_DIR = "jacknet_sweep"
     RESULTS_FILE = args.results_file
     SERIAL_PORT = args.serial_port
     BAUDRATE = args.baudrate
 
+    print("Initalizing ExcelWriter")
+
     with open(RESULTS_FILE, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(["model", "avg inference time ms", "average energy per inference", "category"])
+        
+        print("Searching For tflite folders")
+        
+        models = sorted(MODELS_DIR.rglob("*.tflite"))
 
-        models = sorted(MODELS_DIR.rglob("*_edgetpu.tflite"))
+        if models == None or len(models)==0: raise Exception("No models found")
         for model in models:
             mean_inf_ms, mean_energy, category, out_dir = test_model(
                 model,
@@ -178,9 +189,11 @@ if __name__ == "__main__":
                 CAPTURE_DIR,
                 SERIAL_PORT,
                 dc_volts_in=args.dc_volts_in,
-                r_shunt=args.r_shunt
+                r_shunt=args.r_shunt,
+                build=True,
+                test=False
             )
             writer.writerow([model.name, mean_inf_ms, mean_energy, category])
             print(f"\nMeasurements written to {out_dir}\n")
 
-            #      python3 coralmicro/scripts/flashtool.py --build_dir out --elf_path out/coralmicro-app
+            #      python3 coralmicro/scripts/flashtool.py --build_dir out --elf_path out/coralmicro-appTrue

@@ -1,1 +1,1 @@
-#define MODEL_PATH "data/models/Object_Detection/SSDLite_MobileDet/ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite"
+#define MODEL_PATH "data/models/edgeTPU_hdw/A075D04/Grid_A0.75_D04_quant.tflite"
