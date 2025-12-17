@@ -1,1 +1,1 @@
-#define MODEL_PATH "data/models/Image_Classification/EfficientNet/L/efficientnet-edgetpu-L_quant_edgetpu.tflite"
+#define MODEL_PATH "data/models/Object_Detection/SSDLite_MobileDet/ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite"

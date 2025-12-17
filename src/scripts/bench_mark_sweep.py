@@ -50,7 +50,7 @@ def test_model(model: pathlib.PosixPath, model_dir: pathlib.PosixPath, capture_d
     ], check=True)
 
     subprocess.run(["make", "-C",
-        "out", "-j1", "VERBOSE=1"], check=True)
+        "out", "-j12", "VERBOSE=1"], check=True)
 
     subprocess.run([
         "python3", "coralmicro/scripts/flashtool.py",
@@ -160,7 +160,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    MODELS_DIR = args.models_dir
+    MODELS_DIR = pathlib.Path("~/Coral-TPU-Characterization/data/models/Object_Detection/SSDLite_MobileDet").expanduser() #args.models_dir
     CAPTURE_DIR = args.capture_dir
     RESULTS_FILE = args.results_file
     SERIAL_PORT = args.serial_port
@@ -182,3 +182,5 @@ if __name__ == "__main__":
             )
             writer.writerow([model.name, mean_inf_ms, mean_energy, category])
             print(f"\nMeasurements written to {out_dir}\n")
+
+            #      python3 coralmicro/scripts/flashtool.py --build_dir out --elf_path out/coralmicro-app

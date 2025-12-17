@@ -99,6 +99,7 @@ STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
     GpioSet(kUartCts, false);
     __DSB(); __ISB();
     const uint32_t t_end = DWT->CYCCNT;
+    vTaskDelay(pdMS_TO_TICKS(10));
 
 
 #if defined(SystemCoreClock)
