@@ -267,11 +267,12 @@ class ModelStatsPlotting:
     def power_inf_runs(self, df, results_dir: pathlib.Path,
                     model_category=None, run_names=None, filename=None):
         """
-        4-row figure ordered by ascending Energy per Inference (mJ):
-        1) Average Power (mW)
-        2) Energy per inference (mJ)
-        3) Latency: measured vs quoted (ms)
-        4) Top-1 Accuracy: measured vs quoted (%)
+        Generates two figures:
+        
+        Figure 1 (4-row): Standard metrics (Power, Energy, Latency, Accuracy).
+        Figure 2 (1-row, 2-col): Efficiency metrics side-by-side.
+                                - Left: Sorted by Correct Inf/Sec
+                                - Right: Sorted by Correct Inf/Joule
 
         Returns the sorted dataframe used for plotting.
         """
@@ -328,27 +329,21 @@ class ModelStatsPlotting:
         )
 
         # Coerce numeric
-        for col in [
-            "Energy per Inference (mJ)",
-            "Measured Inference Time (ms)",
-            "Latency (ms)",
-            "Top-1 Accuracy (measured)",
-            "Top-1 Accuracy",
-        ]:
-            if col in subset.columns:
-                subset[col] = pd.to_numeric(subset[col], errors="coerce")
-            else:
-                raise KeyError(f"Required column missing: {col}")
-
-        # Drop rows missing required values
-        required = [
+        numeric_cols = [
             "Energy per Inference (mJ)",
             "Measured Inference Time (ms)",
             "Latency (ms)",
             "Top-1 Accuracy (measured)",
             "Top-1 Accuracy",
         ]
-        valid_mask = subset[required].notnull().all(axis=1)
+        for col in numeric_cols:
+            if col in subset.columns:
+                subset[col] = pd.to_numeric(subset[col], errors="coerce")
+            else:
+                raise KeyError(f"Required column missing: {col}")
+
+        # Drop rows missing required values
+        valid_mask = subset[numeric_cols].notnull().all(axis=1)
         if not valid_mask.all():
             dropped = subset.loc[~valid_mask, "Model name"].tolist()
             print(f"[DEBUG] Dropped runs due to missing data: {dropped}")
@@ -356,97 +351,175 @@ class ModelStatsPlotting:
         if subset.empty:
             raise ValueError("No valid runs left after dropping rows with missing data.")
 
-        # Sort by energy ascending
-        subset.sort_values("Energy per Inference (mJ)", ascending=True, inplace=True)
-        subset.reset_index(drop=True, inplace=True)
+        # -------------------------------------------------------------------------
+        # NEW CALCULATIONS: Correct Inferences per Joule / Second
+        # -------------------------------------------------------------------------
+        subset["Inf_per_Sec"] = 1000.0 / subset["Measured Inference Time (ms)"]
+        subset["Inf_per_Joule"] = 1000.0 / subset["Energy per Inference (mJ)"]
 
-        # Prepare arrays
-        names = subset["Model name"].tolist()
-        power = subset["Average Power (mW)"].to_numpy()
-        energy = subset["Energy per Inference (mJ)"].to_numpy()
-        measured_lat = subset["Measured Inference Time (ms)"].to_numpy()
-        quoted_lat = subset["Latency (ms)"].to_numpy()
-        acc_measured = subset["Top-1 Accuracy (measured)"].to_numpy()
-        acc_quoted = subset["Top-1 Accuracy"].to_numpy()
+        # Calculate "Correct" metrics
+        acc_ratio = subset["Top-1 Accuracy (measured)"] / 100.0
+        subset["Correct_Inf_per_Sec"] = subset["Inf_per_Sec"] * acc_ratio
+        subset["Correct_Inf_per_Joule"] = subset["Inf_per_Joule"] * acc_ratio
+
+        # -------------------------------------------------------------------------
+        # FIGURE 1 GENERATION (Sorted by Energy for the original 4-row plot)
+        # -------------------------------------------------------------------------
+        # Sort for Figure 1
+        subset_energy_sort = subset.sort_values("Energy per Inference (mJ)", ascending=True).copy()
+        
+        names_e = subset_energy_sort["Model name"].tolist()
+        power = subset_energy_sort["Average Power (mW)"].to_numpy()
+        energy = subset_energy_sort["Energy per Inference (mJ)"].to_numpy()
+        measured_lat = subset_energy_sort["Measured Inference Time (ms)"].to_numpy()
+        quoted_lat = subset_energy_sort["Latency (ms)"].to_numpy()
+        acc_measured = subset_energy_sort["Top-1 Accuracy (measured)"].to_numpy()
+        acc_quoted = subset_energy_sort["Top-1 Accuracy"].to_numpy()
 
         cmap = matplotlib.colormaps["tab10"]
-        colors = [cmap(i) for i in range(len(names))]
-        x_pos = np.arange(len(names))
+        colors_e = [cmap(i % 10) for i in range(len(names_e))]
+        x_pos_e = np.arange(len(names_e))
 
         fig, axes = plt.subplots(nrows=4, ncols=1, sharex=True, figsize=(14, 18))
 
         # 1) Average Power
-        axes[0].bar(x_pos, power, color=colors)
+        axes[0].bar(x_pos_e, power, color=colors_e)
         axes[0].set_title("Average Power", fontsize=22)
         axes[0].set_ylabel("mW", fontsize=20)
-        axes[0].set_ylim(0,1200)
+        axes[0].set_ylim(0, 1200)
         axes[0].tick_params(axis="y", labelsize=20)
         for i, p in enumerate(power):
-            axes[0].text(x_pos[i], p * 1.01, f"{p:.1f}", ha="center", va="bottom", fontsize=16)
+            axes[0].text(x_pos_e[i], p * 1.01, f"{p:.1f}", ha="center", va="bottom", fontsize=16)
 
         # 2) Energy per Inference
-        axes[1].bar(x_pos, energy, color=colors)
+        axes[1].bar(x_pos_e, energy, color=colors_e)
         axes[1].set_title("Energy per Inference", fontsize=22)
         axes[1].set_ylabel("mJ", fontsize=20)
-        axes[1].set_ylim(0,60)
+        axes[1].set_ylim(0, 60)
         axes[1].tick_params(axis="y", labelsize=20)
         for i, e in enumerate(energy):
-            axes[1].text(x_pos[i], e * 1.01, f"{e:.1f}", ha="center", va="bottom", fontsize=16)
+            axes[1].text(x_pos_e[i], e * 1.01, f"{e:.1f}", ha="center", va="bottom", fontsize=16)
 
-        # 3) Latency: measured vs quoted
+        # 3) Latency
         for i, (m, q) in enumerate(zip(measured_lat, quoted_lat)):
-            base_color = colors[i]
+            base_color = colors_e[i]
             light = lighten_color(base_color, 0.5)
-
             if m >= q:
-                # Quoted bar at bottom, then delta stacked on top
-                axes[2].bar(x_pos[i], q, color=base_color, label="Quoted" if i == 0 else "")
-                axes[2].bar(x_pos[i], m - q, bottom=q, color=light, label="Measured" if i == 0 else "")
+                axes[2].bar(x_pos_e[i], q, color=base_color)
+                axes[2].bar(x_pos_e[i], m - q, bottom=q, color=light)
             else:
-                # Measured shorter: put quoted baseline, then negative delta
-                axes[2].bar(x_pos[i], m, color=light, label="Measured" if i == 0 else "")
-                axes[2].bar(x_pos[i], q - m, bottom=m, color=base_color, label="Quoted" if i == 0 else "")
-
-            axes[2].text(x_pos[i], m * 1.01, f"{m:.1f}", ha="center", va="bottom", fontsize=18)
-            axes[2].text(x_pos[i], q * 1.01, f"{q:.1f}", ha="center", va="bottom", fontsize=18)
+                axes[2].bar(x_pos_e[i], m, color=light)
+                axes[2].bar(x_pos_e[i], q - m, bottom=m, color=base_color)
+            axes[2].text(x_pos_e[i], m * 1.01, f"{m:.1f}", ha="center", va="bottom", fontsize=18)
+            axes[2].text(x_pos_e[i], q * 1.01, f"{q:.1f}", ha="center", va="bottom", fontsize=18)
 
         axes[2].set_title("Latency (Quoted vs Measured)", fontsize=22)
         axes[2].set_ylabel("ms", fontsize=20)
-        axes[2].set_ylim(0,60)
-        axes[2].legend(fontsize=18)
+        axes[2].set_ylim(0, 60)
         axes[2].tick_params(axis="y", labelsize=20)
-        # 4) Accuracy: measured vs quoted
+
+        # 4) Accuracy
         width = 0.4
-        axes[3].bar(x_pos - width/2, acc_quoted, width=width,
-                    color=colors, label="Quoted")
-        axes[3].bar(x_pos + width/2, acc_measured, width=width,
-                    color=[lighten_color(c, 0.5) for c in colors], label="Measured")
+        axes[3].bar(x_pos_e - width/2, acc_quoted, width=width, color=colors_e, label="Quoted")
+        axes[3].bar(x_pos_e + width/2, acc_measured, width=width, color=[lighten_color(c, 0.5) for c in colors_e], label="Measured")
         axes[3].set_title("Top-1 Accuracy (Quoted vs Measured)", fontsize=22)
         axes[3].set_ylabel("%", fontsize=20)
         axes[3].set_ylim(0, 100)
         axes[3].tick_params(axis="y", labelsize=20)
         for i, (a_m, a_q) in enumerate(zip(acc_measured, acc_quoted)):
-            axes[3].text(x_pos[i] + width/2, a_m * 1.01, f"{a_m:.0f}",
-                        ha="center", va="bottom", fontsize=18)
-            axes[3].text(x_pos[i] - width/2, a_q * 1.01, f"{a_q:.0f}",
-                        ha="center", va="bottom", fontsize=18)
+            axes[3].text(x_pos_e[i] + width/2, a_m * 1.01, f"{a_m:.0f}", ha="center", va="bottom", fontsize=18)
+            axes[3].text(x_pos_e[i] - width/2, a_q * 1.01, f"{a_q:.0f}", ha="center", va="bottom", fontsize=18)
         axes[3].legend(fontsize=18)
 
-        # Shared x labels
-        axes[3].set_xticks(x_pos)
-        axes[3].set_xticklabels(names, rotation=30, ha="right", fontsize=20)
+        axes[3].set_xticks(x_pos_e)
+        axes[3].set_xticklabels(names_e, rotation=30, ha="right", fontsize=20)
 
         plt.tight_layout()
         if filename:
             plt.savefig(filename, dpi=300, bbox_inches="tight")
+            print(f"Saved Figure 1 to {filename}")
             plt.close(fig)
         else:
             plt.show()
 
+        # -------------------------------------------------------------------------
+        # FIGURE 2 GENERATION (Independently Sorted Columns)
+        # -------------------------------------------------------------------------
+        
+        # 1. Dataset sorted by Speed (Inferences per Second)
+        df_speed = subset.sort_values("Correct_Inf_per_Sec", ascending=True).copy()
+        
+        # 2. Dataset sorted by Efficiency (Inferences per Joule)
+        df_efficiency = subset.sort_values("Correct_Inf_per_Joule", ascending=True).copy()
+        
+        fig2, axes2 = plt.subplots(nrows=1, ncols=2, figsize=(20, 10))
 
+        # Helper function to plot one column with specific sorting
+        def plot_sorted_col(ax, sorted_df, total_col, correct_col, title, ylabel):
+            
+            names = sorted_df["Model name"].tolist()
+            total_vals = sorted_df[total_col].to_numpy()
+            correct_vals = sorted_df[correct_col].to_numpy()
+            
+            local_x = np.arange(len(names))
+            local_colors = [cmap(i % 10) for i in range(len(names))]
+            
+            max_y = 0
+            
+            for i, (total, correct) in enumerate(zip(total_vals, correct_vals)):
+                base_color = local_colors[i]
+                light = lighten_color(base_color, 0.5)
+
+                # Stack: Correct (solid) at bottom, Wasted (Total - Correct) (light) on top
+                ax.bar(local_x[i], correct, color=base_color)
+                ax.bar(local_x[i], total - correct, bottom=correct, color=light)
+                
+                # Label Total: Above the bar
+                ax.text(local_x[i], total * 1.02, f"{total:.1f}", 
+                        ha="center", va="bottom", fontsize=16, fontweight='bold')
+                
+                # Label Correct: Inside the bar, just below the top of the solid section
+                if correct > 0:
+                    ax.text(local_x[i], correct - (correct * 0.05), f"{correct:.1f}", 
+                            ha="center", va="top", fontsize=16, color="white", fontweight='bold')
+                
+                if total > max_y: max_y = total
+
+            ax.set_title(title, fontsize=22)
+            ax.set_ylabel(ylabel, fontsize=20)
+            ax.set_ylim(0, max_y * 1.10) # 25% headroom
+            ax.tick_params(axis="y", labelsize=20)
+            ax.set_xticks(local_x)
+            ax.set_xticklabels(names, rotation=30, ha="right", fontsize=20)
+            
+            # Custom Legend
+            from matplotlib.patches import Patch
+            legend_elements = [Patch(facecolor='gray', label='Correct (Solid)'),
+                               Patch(facecolor='lightgray', label='Total (Faded)')]
+            ax.legend(handles=legend_elements, fontsize=16, loc='upper left')
+
+        # Plot Left: Sorted by Speed
+        plot_sorted_col(axes2[0], df_speed, 
+                        "Inf_per_Sec", "Correct_Inf_per_Sec", 
+                        "Inferences per Second", "Inf / Sec")
+
+        # Plot Right: Sorted by Efficiency
+        plot_sorted_col(axes2[1], df_efficiency, 
+                        "Inf_per_Joule", "Correct_Inf_per_Joule", 
+                        "Inferences per Joule", "Inf / Joule")
+
+        plt.tight_layout()
+        if filename:
+            import os
+            path, ext = os.path.splitext(filename)
+            file2 = f"{path}_efficiency_metrics{ext}"
+            plt.savefig(file2, dpi=300, bbox_inches="tight")
+            print(f"Saved Figure 2 to {file2}")
+            plt.close(fig2)
+        else:
+            plt.show()
 
         return subset
-
     def budgeted_correct_inferences(self, df, buffer_energy, frame_time,results_dir: pathlib.Path,
                     model_category=None, run_names=None, filename=None):
         
@@ -568,63 +641,286 @@ class ModelStatsPlotting:
     
     def budget_correct_loop(self, df: pd.DataFrame, buffers: list, frame_times: list, results_dir: pathlib.Path, filename="all_grids.xlsx"): 
         """
-        Loop through all models and create a sweep of performance against budget combos.
-        Saves each model's grid as a separate sheet in the Excel file.
+        Loop through all models, create individual grids, and generate a comparison plot 
+        specifically for MobileNet V1 0.50 vs 0.75.
         """
-        # Ensure directory exists
         results_dir.mkdir(parents=True, exist_ok=True)
         output_path = results_dir / filename
+        plot_dir = results_dir / "plots" / "budget_traces"
+        plot_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use ExcelWriter to save multiple sheets to the same file
+        # Store data for the comparison plot
+        comparison_data = []
+        target_models = ["MobileNet V1 (0.50)", "MobileNet V1 (.75)"] 
+
         with pd.ExcelWriter(output_path) as writer:
             
-            # iterate through each model individually
             for _, row in df.iterrows():
                 name = row["Model name"]
                 print(f"Processing model: {name}")
 
-                # extract metrics for this specific model
                 energy_j = row["Energy per Inference (mJ)"] * 1e-3
                 latency_s = row["Measured Inference Time (ms)"] * 1e-3
                 acc_frac = row["Top-1 Accuracy (measured)"] / 100.0
 
-                # create a fresh grid for this model (Rows: Buffers, Cols: Times)
-                grid_out = np.empty((len(buffers), len(frame_times)), dtype=object)
+                # Check if this model is one of the target models for comparison
+                if any(t in name for t in target_models):
+                                comparison_data.append({
+                                    "name": name,
+                                    "acc": acc_frac,
+                                    "energy_j": energy_j,
+                                    "latency_s": latency_s,
+                                    "power_w": energy_j / latency_s,
+                                    "color": "tab:blue" if "0.50" in name else "tab:orange"
+                                })
 
+                # build grid of model performance for different budgets
+                grid_out = np.empty((len(buffers), len(frame_times)), dtype=object)
                 for i, energy_buffer in enumerate(buffers):
                     for j, frame_time in enumerate(frame_times):
-                        
-                        # Calculate max possible inferences 
-                        count_time_limited = frame_time / latency_s
-                        count_energy_limited = energy_buffer / energy_j
-
-                        # Calculate correct 
-                        correct_time = int(count_time_limited * acc_frac)
-                        correct_energy = int(count_energy_limited * acc_frac)
-
-                        # Determine which budget limits inference
+                        # inferences within budget (float)
+                        count_time = frame_time / latency_s
+                        count_energy = energy_buffer / energy_j
+                        #mul by acc and floor
+                        correct_time = int(count_time * acc_frac)
+                        correct_energy = int(count_energy * acc_frac)
+                        # track limiting factor
                         if correct_time < correct_energy:
-                            final_correct = correct_time
-                            limiter = "Time"
+                            final = correct_time
+                            lim = "Time"
                         else:
-                            final_correct = correct_energy
-                            limiter = "Energy"
+                            final = correct_energy
+                            lim = "Energy"
+                        grid_out[i, j] = f"{final} correct ({lim})"
 
-                        # Format string for the cell
-                        grid_out[i, j] = f"{final_correct} correct ({limiter})"
-
-                # Create DataFrame for this model's grid
-                df_grid = pd.DataFrame(
-                    grid_out,
-                    index=[f"Energy: {np.round(b,2)}J" for b in buffers],
-                    columns=[f"Time: {np.round(t,2)}s" for t in frame_times]
-                )
-
-                # Write to a sheet named after the model
+                df_grid = pd.DataFrame(grid_out, 
+                                    index=[f"Energy: {np.round(b,2)}J" for b in buffers],
+                                    columns=[f"Time: {np.round(t,2)}s" for t in frame_times])
+                # write to excel sheet
                 safe_sheet_name = name[:31].replace(":", "-").replace("/", "-")
                 df_grid.to_excel(writer, sheet_name=safe_sheet_name)
 
+        # Comparison Plot: 0.50 vs 0.75
+
+        # if len(comparison_data) == 2:
+        #     print("Generating Decision Frontier (Time vs. Energy Strategy)...")
+            
+        #     # 1. Identify "Sprinter" (Efficient) vs "Powerhouse" (High Rate)
+        #     # We assume one is more efficient (higher slope) and one has higher max rate.
+        #     # If one model is better at BOTH, there is no crossover (it always wins).
+            
+        #     # Sort by Max Rate (Correct Inferences / Sec)
+        #     sorted_by_rate = sorted(comparison_data, key=lambda x: x['acc']/x['latency_s'])
+        #     model_low_rate = sorted_by_rate[0]  # MobileNet 0.50 (saturates early)
+        #     model_high_rate = sorted_by_rate[1] # MobileNet 0.75 (higher ceiling)
+            
+        #     rate_low = model_low_rate['acc'] / model_low_rate['latency_s']
+        #     slope_high = model_high_rate['acc'] / model_high_rate['energy_j']
+        #     slope_low = model_low_rate['acc'] / model_low_rate['energy_j']
+
+        #     # Only proceed if a trade-off actually exists
+        #     if slope_low > slope_high:
+                
+        #         plt.figure(figsize=(10, 6))
+                
+        #         # Create Time Range (0 to 100s, or slightly more than max frame time)
+        #         max_t = 100
+        #         time_range = np.linspace(0, max_t, 200)
+                
+        #         # Calculate the Breakeven Energy Line: E = T * (Rate_Low / Slope_High)
+        #         # This is the energy required for the High-Power model to catch up 
+        #         # to the Low-Power model's saturation point.
+        #         k = rate_low / slope_high
+        #         breakeven_energy = time_range * k
+                
+        #         # Plot the dividing line
+        #         plt.plot(time_range, breakeven_energy, 
+        #                 color='black', linewidth=2, linestyle='--', 
+        #                 label=f"Breakeven Frontier (k={k:.2f} J/s)")
+                
+        #         # Shade the Regions
+        #         # Region Below: Battery is too small -> Use Efficient Model
+        #         plt.fill_between(time_range, 0, breakeven_energy, 
+        #                         color=model_low_rate['color'], alpha=0.15)
+        #         plt.text(max_t * 0.75, max(breakeven_energy) * 0.25, 
+        #                 f"ZONE: {model_low_rate['name']}\n(Battery Limited)", 
+        #                 ha='center', va='center', fontweight='bold', color=model_low_rate['color'],fontsize = 20)
+                
+        #         # Region Above: Battery is sufficient -> Use High-Accuracy Model
+        #         # We set an arbitrary top y-limit for shading (e.g. 1.5x max breakeven)
+        #         y_top = max(breakeven_energy) * 1.5
+        #         plt.fill_between(time_range, breakeven_energy, y_top, 
+        #                         color=model_high_rate['color'], alpha=0.15)
+        #         plt.text(max_t * 0.25, max(breakeven_energy) * 1.25, 
+        #                 f"ZONE: {model_high_rate['name']}\n(Time Limited)", 
+        #                 ha='center', va='center', fontweight='bold', color=model_high_rate['color'],fontsize = 20)
+
+        #         plt.title("Mission Strategy: Which Model Should I Run?",fontsize = 20)
+        #         plt.xlabel("Pass Duration (Seconds)",fontsize = 20)
+        #         plt.ylabel("Required Energy Buffer (Joules)",fontsize = 20)
+        #         plt.xlim(0, max_t)
+        #         plt.ylim(0, y_top)
+        #         plt.xticks(fontsize=14)
+        #         plt.yticks(fontsize=14)
+        #         plt.grid(True, linestyle=':', alpha=0.5)
+        #         # plt.legend(loc="upper left")
+                
+        #         plt.tight_layout()
+        #         plt.savefig(plot_dir / "MobileNet_Decision_Frontier.png")
+        #         plt.close()
+
+        if len(comparison_data) > 0:
+                print("Generating Comparison Plot (Correct Inferences)...")
+                
+                plt.figure(figsize=(10, 6))
+                
+                smooth_buffers = np.linspace(min(buffers), max(buffers), 1000)
+                max_pass_time = 10.0
+
+                # Metrics storage for calculating crossover
+                metrics = {}
+
+                for item in comparison_data:
+                    # 1. Calculate fundamental rates
+                    slope_correct_per_joule = item['acc'] / item['energy_j']
+                    ceiling_correct_per_sec = item['acc'] / item['latency_s']
+                    
+                    # Store for comparison logic
+                    metrics[item['name']] = {
+                        "slope": slope_correct_per_joule,
+                        "rate": ceiling_correct_per_sec,
+                        "ceiling_val": ceiling_correct_per_sec * max_pass_time,
+                        "color": item['color']
+                    }
+                    
+                    # 2. Calculate the trace
+                    correct_energy_bound = smooth_buffers * slope_correct_per_joule
+                    max_possible_inferences = ceiling_correct_per_sec * max_pass_time
+                    correct_time_bound = np.full_like(smooth_buffers, max_possible_inferences)
+                    
+                    correct_trace = np.minimum(correct_energy_bound, correct_time_bound)
+                    
+                    # 3. Plot
+                    plt.plot(smooth_buffers, correct_trace, 
+                            linewidth=3, 
+                            color=item["color"], 
+                            label=f"{item['name']}\n(Slope: {slope_correct_per_joule:.1f}/J | Rate: {ceiling_correct_per_sec:.1f}/s)")
+
+                # -----------------------------------------------------
+                # Calculate and Plot the Exact Crossover Point
+                # -----------------------------------------------------
+                # We need to find where the "Powerhouse" (Higher Ceiling) crosses the "Sprinter" (Steeper Slope)
+                # Sort by Ceiling (Rate) to find the 'High Performer' and 'Efficient Performer'
+                sorted_models = sorted(metrics.items(), key=lambda x: x[1]['rate'])
+                
+                # Assumption: The one with the higher rate (0.75) has the lower slope (less efficient). 
+                # If not, it simply wins everywhere and they never cross.
+                low_ceiling_model = sorted_models[0]  # MobileNet 0.50
+                high_ceiling_model = sorted_models[1] # MobileNet 0.75
+                
+                name_lo, data_lo = low_ceiling_model
+                name_hi, data_hi = high_ceiling_model
+                
+                # Check if a crossover is physically possible (High Ceiling must have Lower Slope)
+                if data_hi['slope'] < data_lo['slope']:
+                    # The Intersection Equation:
+                    # High_Slope * Buffer = Low_Ceiling_Value
+                    # Buffer = Low_Ceiling_Value / High_Slope
+                    
+                    breakeven_joules = data_lo['ceiling_val'] / data_hi['slope']
+                    breakeven_inferences = data_lo['ceiling_val']
+                    
+                    print(f"\n*** BREAKEVEN ANALYSIS ({max_pass_time}s Pass) ***")
+                    print(f"Model {name_lo} maxes out at {int(data_lo['ceiling_val'])} inferences.")
+                    print(f"Model {name_hi} needs {breakeven_joules:.2f} Joules to match that.")
+                    print(f"VERDICT: For batteries > {breakeven_joules:.2f}J, use {name_hi}. Otherwise use {name_lo}.\n")
+                    
+                    # Plot the Crossover Marker
+                    if min(buffers) < breakeven_joules < max(buffers):
+                        plt.axvline(breakeven_joules, color='red', linestyle=':', alpha=0.8)
+                        plt.scatter([breakeven_joules], [breakeven_inferences], color='red', zorder=10)
+                        plt.text(breakeven_joules, breakeven_inferences * 1.05, 
+                                f" Breakeven: {breakeven_joules:.1f}J", 
+                                color='red', fontsize=12, fontweight='bold')
+                # -----------------------------------------------------
+
+                plt.title(f"Correct Inferences vs. Battery Size\n(Pass Duration: {max_pass_time:.1f}s)", fontsize=20)
+                plt.xlabel("Energy Buffer (Joules)", fontsize=20)
+                plt.ylabel("Total Correct Inferences", fontsize=20)
+                plt.xticks(fontsize=14)
+                plt.yticks(fontsize=14)
+                plt.ylim(0,600)
+                plt.xlim(0,10)
+                plt.grid(True, linestyle=':', alpha=0.5)
+                plt.legend(loc='upper left', fontsize = 16)
+                plt.tight_layout()
+                
+                plt.savefig(plot_dir / "MobileNet_Comparison_Value.png")
+                plt.close()
+        else:
+            print("Warning: Target MobileNet models not found in dataframe for comparison plot.")
+
         print(f"File saved successfully to {output_path}")
+    
+    # def budget_correct_loop(self, df: pd.DataFrame, buffers: list, frame_times: list, results_dir: pathlib.Path, filename="all_grids.xlsx"): 
+    #     """
+    #     Loop through all models and create a sweep of performance against budget combos.
+    #     Saves each model's grid as a separate sheet in the Excel file.
+    #     """
+    #     # Ensure directory exists
+    #     results_dir.mkdir(parents=True, exist_ok=True)
+    #     output_path = results_dir / filename
+
+    #     # Use ExcelWriter to save multiple sheets to the same file
+    #     with pd.ExcelWriter(output_path) as writer:
+            
+    #         # iterate through each model individually
+    #         for _, row in df.iterrows():
+    #             name = row["Model name"]
+    #             print(f"Processing model: {name}")
+
+    #             # extract metrics for this specific model
+    #             energy_j = row["Energy per Inference (mJ)"] * 1e-3
+    #             latency_s = row["Measured Inference Time (ms)"] * 1e-3
+    #             acc_frac = row["Top-1 Accuracy (measured)"] / 100.0
+
+    #             # create a fresh grid for this model (Rows: Buffers, Cols: Times)
+    #             grid_out = np.empty((len(buffers), len(frame_times)), dtype=object)
+
+    #             for i, energy_buffer in enumerate(buffers):
+    #                 for j, frame_time in enumerate(frame_times):
+                        
+    #                     # Calculate max possible inferences 
+    #                     count_time_limited = frame_time / latency_s
+    #                     count_energy_limited = energy_buffer / energy_j
+
+    #                     # Calculate correct 
+    #                     correct_time = int(count_time_limited * acc_frac)
+    #                     correct_energy = int(count_energy_limited * acc_frac)
+
+    #                     # Determine which budget limits inference
+    #                     if correct_time < correct_energy:
+    #                         final_correct = correct_time
+    #                         limiter = "Time"
+    #                     else:
+    #                         final_correct = correct_energy
+    #                         limiter = "Energy"
+
+    #                     # Format string for the cell
+    #                     grid_out[i, j] = f"{final_correct} correct ({limiter})"
+
+    #             # Create DataFrame for this model's grid
+    #             df_grid = pd.DataFrame(
+    #                 grid_out,
+    #                 index=[f"Energy: {np.round(b,2)}J" for b in buffers],
+    #                 columns=[f"Time: {np.round(t,2)}s" for t in frame_times]
+    #             )
+
+    #             # Write to a sheet named after the model
+    #             safe_sheet_name = name[:31].replace(":", "-").replace("/", "-")
+    #             df_grid.to_excel(writer, sheet_name=safe_sheet_name)
+
+    #     print(f"File saved successfully to {output_path}")
 
 
         def obj_det_plt(self):
