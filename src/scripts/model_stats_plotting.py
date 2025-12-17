@@ -178,6 +178,136 @@ def param_latency_scatter(names,paramcount, latency, filename):
     plt.tight_layout()
     plt.savefig(filename, dpi=300, bbox_inches="tight")
 
+def jacknet_sweep_plot(self, results_dir: pathlib.Path, filename=quikndirty):
+        """
+        Quick plot for JackNet 0.75 (Depth 2,4,6,8,10) sweep.
+        
+        Plots 5 rows:
+        1) Operation Count (M)
+        2) Average Power (mW)
+        3) Energy per Inference (mJ)
+        4) Measured Latency (ms)
+        5) Accuracy (%)
+        """
+        
+        # Hardcoded specific run names for this sweep
+        run_names = ["A075D02", "A075D04", "A075D06", "A075D08", "A075D10"]
+        sheet_name = "Img_Class"
+
+        print(f"[DEBUG] Collecting results from: {results_dir}")
+        # Assuming collect_results returns dict keyed by folder name (e.g. "A075D02")
+        results_dict = collect_results(results_dir)
+        
+        # Load Excel Metadata
+        df = pd.read_excel(self.sheet, sheet_name)
+        
+        # Filter for just these models
+        subset = df[df["Model name"].isin(run_names)].copy()
+        
+        # Sort based on the hardcoded list order (Depth 2 -> 10)
+        # Create a categorical type to enforce order
+        subset["Model name"] = pd.Categorical(subset["Model name"], categories=run_names, ordered=True)
+        subset.sort_values("Model name", inplace=True)
+        subset.reset_index(drop=True, inplace=True)
+
+        if subset.empty:
+            raise ValueError(f"No matching models found in Excel for: {run_names}")
+
+        # --- Map Saleae Results ---
+        # Note: If collect_results keys don't match exactly, we might need a fallback, 
+        # but usually folder name = model name.
+        subset["Measured Inference Time (ms)"] = subset["Model name"].map(
+            lambda m: results_dict.get(m, {}).get("inference_time_ms")
+        )
+        subset["Energy per Inference (mJ)"] = subset["Model name"].map(
+            lambda m: results_dict.get(m, {}).get("energy_mJ")
+        )
+        subset["Average Power (mW)"] = subset["Model name"].map(
+            lambda m: results_dict.get(m, {}).get("avg_power_mW")
+        )
+
+        # --- Prepare Plot Data ---
+        names = subset["Model name"].tolist()
+        
+        # 1. Operations
+        # Ensure column name matches Excel exactly (from your image)
+        ops_col = "Operation Count (M)" 
+        if ops_col not in subset.columns:
+            print(f"[WARNING] '{ops_col}' not found. Looking for alternatives...")
+            # Fallback search if name varies slightly
+            found = [c for c in subset.columns if "Operation" in c]
+            if found: ops_col = found[0]
+            
+        ops = pd.to_numeric(subset[ops_col], errors='coerce').fillna(0).to_numpy()
+
+        # 2. Power
+        power = pd.to_numeric(subset["Average Power (mW)"], errors='coerce').fillna(0).to_numpy()
+        
+        # 3. Energy
+        energy = pd.to_numeric(subset["Energy per Inference (mJ)"], errors='coerce').fillna(0).to_numpy()
+        
+        # 4. Latency
+        latency = pd.to_numeric(subset["Measured Inference Time (ms)"], errors='coerce').fillna(0).to_numpy()
+        
+        # 5. Accuracy
+        # Try to find "Measured" first, fallback to "Top-1 Accuracy"
+        acc_col = "Top-1 Accuracy"
+        acc_label = "Top-1 Accuracy"
+        if "Top-1 Accuracy (measured)" in subset.columns:
+            acc_col = "Top-1 Accuracy (measured)"
+            acc_label = "Measured Accuracy"
+            
+        accuracy = pd.to_numeric(subset[acc_col], errors='coerce').fillna(0).to_numpy()
+
+        # --- Plotting ---
+        cmap = matplotlib.colormaps["tab10"]
+        colors = [cmap(i) for i in range(len(names))]
+        x_pos = np.arange(len(names))
+        
+        fig, axes = plt.subplots(nrows=5, ncols=1, sharex=True, figsize=(10, 18))
+        
+        # Helper to plot bar and add text
+        def plot_bar(ax, data, title, ylabel, ylim_buffer=1.1, color_list=colors):
+            ax.bar(x_pos, data, color=color_list)
+            ax.set_title(title, fontsize=16)
+            ax.set_ylabel(ylabel, fontsize=14)
+            if len(data) > 0:
+                ax.set_ylim(0, max(data) * ylim_buffer)
+            ax.tick_params(axis="y", labelsize=12)
+            for i, v in enumerate(data):
+                ax.text(x_pos[i], v * 1.01, f"{v:.1f}", ha="center", va="bottom", fontsize=12)
+
+        # 1) Operation Count
+        plot_bar(axes[0], ops, "Operation Count", "M Ops")
+
+        # 2) Average Power
+        plot_bar(axes[1], power, "Average Power", "mW")
+
+        # 3) Energy per Inference
+        plot_bar(axes[2], energy, "Energy per Inference", "mJ")
+
+        # 4) Latency
+        plot_bar(axes[3], latency, "Measured Latency", "ms")
+
+        # 5) Accuracy
+        plot_bar(axes[4], accuracy, acc_label, "%", ylim_buffer=1.2)
+        axes[4].set_ylim(0, 100) # Force 0-100 for accuracy
+
+        # X Axis
+        axes[4].set_xticks(x_pos)
+        axes[4].set_xticklabels(names, rotation=30, ha="right", fontsize=14)
+
+        plt.tight_layout()
+        
+        if filename:
+            plt.savefig(filename, dpi=300, bbox_inches="tight")
+            print(f"Saved JackNet plot to {filename}")
+            plt.close(fig)
+        else:
+            plt.show()
+
+        return subset
+
 
 ## Main class ##
 class ModelStatsPlotting:
@@ -1108,3 +1238,5 @@ if __name__ == "__main__":
 #     "MobileNet V2",
 #     "MobileNet V2 (TF_ver_2.0)",
 #     "MobileNet V3"]
+
+    jacknet_sweep_plot(REPO_ROOT / "results/captures/jacknet_sweep", REPO_ROOT / "results/plots/jacknet_sweep.png")
