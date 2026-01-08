@@ -2,7 +2,7 @@ coralmicro
 data/val/coco
 data/val/imagenet
 Hidden_models
-data
+data/models
 out
 .idea
 cmake-build-debug
