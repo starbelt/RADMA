@@ -1,4 +1,5 @@
 import pathlib
+import ipympl
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -105,7 +106,7 @@ def power_inference_dataframe(results_dir: pathlib.Path,
 
     return subset
 
-def budget_correct_loop(df: pd.DataFrame, buffers: list, frame_times: list, results_dir: pathlib.Path, filename="all_grids.xlsx"): 
+def budget_correct_loop(df: pd.DataFrame, buffers: list, frame_times: list, results_dir: pathlib.Path, filename="all_grids.xlsx", mode = "all"): 
     """
     Loop through all models, create individual grids, and generate a comparison plot 
     specifically for MobileNet V1 0.50 vs 0.75.
@@ -166,76 +167,75 @@ def budget_correct_loop(df: pd.DataFrame, buffers: list, frame_times: list, resu
             safe_sheet_name = name[:31].replace(":", "-").replace("/", "-")
             df_grid.to_excel(writer, sheet_name=safe_sheet_name)
 
-    # Comparison Plot: 0.50 vs 0.75
 
-    # if len(comparison_data) == 2:
-    #     print("Generating Decision Frontier (Time vs. Energy Strategy)...")
+    if len(comparison_data) > 0 and (mode == "frontier" or mode == 'all'):
+        print("Generating Decision Frontier (Time vs. Energy Strategy)...")
         
-    #     # 1. Identify "Sprinter" (Efficient) vs "Powerhouse" (High Rate)
-    #     # We assume one is more efficient (higher slope) and one has higher max rate.
-    #     # If one model is better at BOTH, there is no crossover (it always wins).
+        # 1. Identify "Sprinter" (Efficient) vs "Powerhouse" (High Rate)
+        # We assume one is more efficient (higher slope) and one has higher max rate.
+        # If one model is better at BOTH, there is no crossover (it always wins).
         
-    #     # Sort by Max Rate (Correct Inferences / Sec)
-    #     sorted_by_rate = sorted(comparison_data, key=lambda x: x['acc']/x['latency_s'])
-    #     model_low_rate = sorted_by_rate[0]  # MobileNet 0.50 (saturates early)
-    #     model_high_rate = sorted_by_rate[1] # MobileNet 0.75 (higher ceiling)
+        # Sort by Max Rate (Correct Inferences / Sec)
+        sorted_by_rate = sorted(comparison_data, key=lambda x: x['acc']/x['latency_s'])
+        model_low_rate = sorted_by_rate[0]  # MobileNet 0.50 (saturates early)
+        model_high_rate = sorted_by_rate[1] # MobileNet 0.75 (higher ceiling)
         
-    #     rate_low = model_low_rate['acc'] / model_low_rate['latency_s']
-    #     slope_high = model_high_rate['acc'] / model_high_rate['energy_j']
-    #     slope_low = model_low_rate['acc'] / model_low_rate['energy_j']
+        rate_low = model_low_rate['acc'] / model_low_rate['latency_s']
+        slope_high = model_high_rate['acc'] / model_high_rate['energy_j']
+        slope_low = model_low_rate['acc'] / model_low_rate['energy_j']
 
-    #     # Only proceed if a trade-off actually exists
-    #     if slope_low > slope_high:
+        # Only proceed if a trade-off actually exists
+        if slope_low > slope_high:
             
-    #         plt.figure(figsize=(10, 6))
+            plt.figure(figsize=(10, 6))
             
-    #         # Create Time Range (0 to 100s, or slightly more than max frame time)
-    #         max_t = 100
-    #         time_range = np.linspace(0, max_t, 200)
+            # Create Time Range (0 to 100s, or slightly more than max frame time)
+            max_t = 100
+            time_range = np.linspace(0, max_t, 200)
             
-    #         # Calculate the Breakeven Energy Line: E = T * (Rate_Low / Slope_High)
-    #         # This is the energy required for the High-Power model to catch up 
-    #         # to the Low-Power model's saturation point.
-    #         k = rate_low / slope_high
-    #         breakeven_energy = time_range * k
+            # Calculate the Breakeven Energy Line: E = T * (Rate_Low / Slope_High)
+            # This is the energy required for the High-Power model to catch up 
+            # to the Low-Power model's saturation point.
+            k = rate_low / slope_high
+            breakeven_energy = time_range * k
             
-    #         # Plot the dividing line
-    #         plt.plot(time_range, breakeven_energy, 
-    #                 color='black', linewidth=2, linestyle='--', 
-    #                 label=f"Breakeven Frontier (k={k:.2f} J/s)")
+            # Plot the dividing line
+            plt.plot(time_range, breakeven_energy, 
+                    color='black', linewidth=2, linestyle='--', 
+                    label=f"Breakeven Frontier (k={k:.2f} J/s)")
             
-    #         # Shade the Regions
-    #         # Region Below: Battery is too small -> Use Efficient Model
-    #         plt.fill_between(time_range, 0, breakeven_energy, 
-    #                         color=model_low_rate['color'], alpha=0.15)
-    #         plt.text(max_t * 0.75, max(breakeven_energy) * 0.25, 
-    #                 f"ZONE: {model_low_rate['name']}\n(Battery Limited)", 
-    #                 ha='center', va='center', fontweight='bold', color=model_low_rate['color'],fontsize = 20)
+            # Shade the Regions
+            # Region Below: Battery is too small -> Use Efficient Model
+            plt.fill_between(time_range, 0, breakeven_energy, 
+                            color=model_low_rate['color'], alpha=0.15)
+            plt.text(max_t * 0.75, max(breakeven_energy) * 0.25, 
+                    f"ZONE: {model_low_rate['name']}\n(Battery Limited)", 
+                    ha='center', va='center', fontweight='bold', color=model_low_rate['color'],fontsize = 20)
             
-    #         # Region Above: Battery is sufficient -> Use High-Accuracy Model
-    #         # We set an arbitrary top y-limit for shading (e.g. 1.5x max breakeven)
-    #         y_top = max(breakeven_energy) * 1.5
-    #         plt.fill_between(time_range, breakeven_energy, y_top, 
-    #                         color=model_high_rate['color'], alpha=0.15)
-    #         plt.text(max_t * 0.25, max(breakeven_energy) * 1.25, 
-    #                 f"ZONE: {model_high_rate['name']}\n(Time Limited)", 
-    #                 ha='center', va='center', fontweight='bold', color=model_high_rate['color'],fontsize = 20)
+            # Region Above: Battery is sufficient -> Use High-Accuracy Model
+            # We set an arbitrary top y-limit for shading (e.g. 1.5x max breakeven)
+            y_top = max(breakeven_energy) * 1.5
+            plt.fill_between(time_range, breakeven_energy, y_top, 
+                            color=model_high_rate['color'], alpha=0.15)
+            plt.text(max_t * 0.25, max(breakeven_energy) * 1.25, 
+                    f"ZONE: {model_high_rate['name']}\n(Time Limited)", 
+                    ha='center', va='center', fontweight='bold', color=model_high_rate['color'],fontsize = 20)
 
-    #         plt.title("Mission Strategy: Which Model Should I Run?",fontsize = 20)
-    #         plt.xlabel("Pass Duration (Seconds)",fontsize = 20)
-    #         plt.ylabel("Required Energy Buffer (Joules)",fontsize = 20)
-    #         plt.xlim(0, max_t)
-    #         plt.ylim(0, y_top)
-    #         plt.xticks(fontsize=14)
-    #         plt.yticks(fontsize=14)
-    #         plt.grid(True, linestyle=':', alpha=0.5)
-    #         # plt.legend(loc="upper left")
+            plt.title("Mission Strategy: Which Model Should I Run?",fontsize = 20)
+            plt.xlabel("Pass Duration (Seconds)",fontsize = 20)
+            plt.ylabel("Required Energy Buffer (Joules)",fontsize = 20)
+            plt.xlim(0, max_t)
+            plt.ylim(0, y_top)
+            plt.xticks(fontsize=14)
+            plt.yticks(fontsize=14)
+            plt.grid(True, linestyle=':', alpha=0.5)
+            # plt.legend(loc="upper left")
             
-    #         plt.tight_layout()
-    #         plt.savefig(plot_dir / "MobileNet_Decision_Frontier.png")
-    #         plt.close()
+            plt.tight_layout()
+            plt.savefig(plot_dir / "MobileNet_Decision_Frontier.png")
+            plt.close()
 
-    if len(comparison_data) > 0:
+    if len(comparison_data) > 0 and (mode == "crossover" or mode == 'all'):
             print("Generating Comparison Plot (Correct Inferences)...")
             
             plt.figure(figsize=(10, 6))
@@ -328,6 +328,45 @@ def budget_correct_loop(df: pd.DataFrame, buffers: list, frame_times: list, resu
 
     print(f"File saved successfully to {output_path}")
 
+    # 3D plot
+
+    if len(comparison_data) > 0 and (mode == '3D' or mode == 'all'):
+        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
+        from mpl_toolkits.mplot3d import Axes3D
+        from mpl_toolkits.mplot3d import proj3d
+
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection='3d')
+
+        for item in comparison_data:
+            # 1. Calculate fundamental rates
+            slope_correct_per_joule = item['acc'] / item['energy_j']
+            ceiling_correct_per_sec = item['acc'] / item['latency_s']
+            
+            # 2. Create grid for surface
+            buffer_range = np.linspace(min(buffers), max(buffers), 50)
+            time_range = np.linspace(0.1, max(frame_times), 50)
+            Buffer_grid, Time_grid = np.meshgrid(buffer_range, time_range)
+            
+            # Calculate Correct Inferences Surface
+            Correct_energy_bound = Buffer_grid * slope_correct_per_joule
+            Correct_time_bound = Time_grid * ceiling_correct_per_sec
+            Correct_surface = np.minimum(Correct_energy_bound, Correct_time_bound)
+            
+            # Plot Surface
+            ax.plot_surface(Buffer_grid, Time_grid, Correct_surface, 
+                            alpha=0.5, color=item['color'], label=item['name'])
+
+        ax.set_title("3D Surface: Correct Inferences vs. Battery & Time", fontsize=16)
+        ax.set_xlabel("Energy Buffer (Joules)", fontsize=14)
+        ax.set_ylabel("Pass Duration (Seconds)", fontsize=14)
+        ax.set_zlabel("Total Correct Inferences", fontsize=14)
+        plt.tight_layout()
+        # Rotating the view
+        ax.view_init(elev=30, azim=120)
+
+        plt.savefig(plot_dir / "MobileNet_3D_Surface.png")
+        plt.close()
 
 
 if __name__ == "__main__":
@@ -390,4 +429,4 @@ if __name__ == "__main__":
     buffers.sort()
     frame_times.sort()
 
-    budget_correct_loop(subset, buffers,frame_times ,REPO_ROOT/ "results",)
+    budget_correct_loop(subset, buffers,frame_times ,REPO_ROOT/ "results")
