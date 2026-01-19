@@ -3,5 +3,6 @@ flatbuffers==25.9.23
 matplotlib==3.10.6
 numpy==2.3.3
 pandas==2.3.2
+logic2-automation==1.0.11
 saleae==0.12.0
 tflite==2.18.0
