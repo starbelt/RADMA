@@ -1,2 +1,0 @@
-model,avg inference time ms,average energy per inference,category
-Grid_A0.75_D04_quant.tflite,,,Grid_A0.75_D04_quant.tflite
