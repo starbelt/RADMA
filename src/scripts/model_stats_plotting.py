@@ -178,7 +178,7 @@ def param_latency_scatter(names,paramcount, latency, filename):
     plt.tight_layout()
     plt.savefig(filename, dpi=300, bbox_inches="tight")
 
-def jacknet_sweep_plot(self, results_dir: pathlib.Path, filename=quikndirty):
+def jacknet_sweep_plot(self, results_dir: pathlib.Path, filename='quikndirty'):
         """
         Quick plot for JackNet 0.75 (Depth 2,4,6,8,10) sweep.
         
