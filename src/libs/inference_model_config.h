@@ -1,1 +1,1 @@
-#define MODEL_PATH "data/models/edgeTPU_hdw/A075D04/Grid_A0.75_D04_quant.tflite"
+#define MODEL_PATH "data/models/edgeTPU/Grid_A0.25_D02_quant_edgetpu.tflite"

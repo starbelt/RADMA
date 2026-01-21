@@ -81,10 +81,24 @@ def test_model(model: pathlib.Path, model_dir: pathlib.Path, capture_dir : str, 
     # Create output directory per model (or perhaps not)
     # print("Preparing Output Directories\n")100_000_000
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    # LOGIC CHANGE: Check if capture_dir is provided and if it is absolute
     if capture_dir:
-        out_dir = pathlib.Path(f"results/captures/{capture_dir}/{model.stem}_{ts}")
+        # Convert to Path object
+        custom_path = pathlib.Path(capture_dir)
+        
+        if custom_path.is_absolute():
+            # If absolute (coming from run_test.py), use it directly
+            out_dir = custom_path / f"{model.stem}_{ts}"
+        else:
+            # If relative (running locally), append to default results folder
+            out_dir = pathlib.Path(f"results/captures/{capture_dir}/{model.stem}_{ts}")
     else:
+        # Default fallback
         out_dir = pathlib.Path(f"results/captures/{model.stem}_{ts}")
+
+    # Create the directory explicitly (Safe handling for deep paths)
+    out_dir.mkdir(parents=True, exist_ok=True)
     # # Folder for Saleae
     saleae_dir = out_dir / "saleae_raw"
 
