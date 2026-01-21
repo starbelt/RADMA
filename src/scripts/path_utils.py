@@ -11,6 +11,7 @@ def get_repo_root() -> Path:
     candidates = [
         Path.home() / "Coral-TPU-Characterization",
         Path.home() / "Dev/repos/Coral-TPU-Characterization",
+        Path.home() / "Repos/CoralGUI/libs/coral_tpu_characterization"
     ]
     for c in candidates:
         if c.exists():
