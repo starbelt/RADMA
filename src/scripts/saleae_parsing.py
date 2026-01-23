@@ -254,7 +254,7 @@ class SaleaeOutputParsing:
         else:
             return np.mean(self.inf_times)
         
-    def avg_power_measurement(self, psu_dc_volts: float = 5.0, r_shunt: float = 1.0, subtract_idle: bool = False):
+    def avg_power_measurement(self, psu_dc_volts: float = 5.0, r_shunt: float = 0.2, subtract_idle: bool = False):
             """Compute average power and energy during inference windows"""
 
             if self.v1 is None or self.v2 is None or self.t_analog is None:
@@ -274,16 +274,15 @@ class SaleaeOutputParsing:
                     self.find_idle_power()
                 idle = self.idle_power if self.idle_power is not None else 0.0
 
-            print(f"v_device * I = {v_device * I}, idle = {idle}")
-
             p_inst = v_device * I - 0*idle
 
             if self.rising is None or self.falling is None:
                 mean_power = np.mean(p_inst)
                 return mean_power, None, None, None
 
-            avg_powers = []
+            powers = []
             energies = []
+            durations = []
 
             for t_start, t_end in zip(self.rising, self.falling):
                 mask = (self.t_analog >= t_start) & (self.t_analog <= t_end)
@@ -297,13 +296,14 @@ class SaleaeOutputParsing:
                 duration = t_window[-1] - t_window[0]
 
                 if duration > 0:
-                    avg_powers.append(energy / duration)
+                    powers.append(energy / duration)
+                    durations.append(duration)
                     energies.append(energy)
 
-            mean_power = np.mean(avg_powers) if avg_powers else None
+            mean_power = np.sum(energies)/np.sum(durations) if durations else None
             mean_energy = np.mean(energies) if energies else None
 
-            return mean_power, np.array(avg_powers), mean_energy, np.array(energies)
+            return mean_power, np.array(powers), mean_energy, np.array(energies)
 
 if __name__ == "__main__":
     REPO_ROOT = get_repo_root()
