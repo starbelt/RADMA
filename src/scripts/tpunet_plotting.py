@@ -8,11 +8,12 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d import Axes3D
 
-# --- User Imports ---
 from saleae_parsing import SaleaeOutputParsing
 from path_utils import get_repo_root
 
-# --- Utility Functions ---
+
+plt.rcParams.update({'font.size': 16})  # Base font size
+
 
 def lighten_color(color, factor=0.5):
     """Lightens the given color."""
@@ -28,19 +29,26 @@ class GridStatsPlotting:
         self.df = None
 
     def load_and_aggregate_data(self):
-        alphas = [0.25, 0.5, 0.75, 1.0, 1.25]
+        alphas = ["0.25", "0.50", "0.75", "1.0", "1.25"]
         depths = [2, 4, 6, 8, 10]
         
         data_rows = []
         psu_dc_volts = 5.0
         r_shunt = 0.2
 
-        print(f"[INFO] Aggregating data from {self.saleae_root}...")
+        print(f"\n[INFO] Starting Data Aggregation...")
+        print(f"       Repo Root:   {get_repo_root()}")
+        print(f"       Saleae Root: {self.saleae_root}")
+        print(f"       JSON Dir:    {self.json_dir}")
+
+        if not self.saleae_root.exists():
+            print(f"[CRITICAL] Saleae root does not exist: {self.saleae_root}")
+            return None
 
         for alpha in alphas:
             for depth in depths:
-                # 1. Load JSON Metrics
-                json_name = f"Grid_A{alpha}_D{depth:02d}_quant_eval.json"
+                # Load JSON Metrics
+                json_name = f"Grid_A{float(alpha)}_D{depth:02d}_quant_eval.json" 
                 json_path = self.json_dir / json_name
                 top1 = 0.0
                 
@@ -49,138 +57,212 @@ class GridStatsPlotting:
                         with open(json_path, 'r') as f:
                             jdata = json.load(f)
                         top1 = jdata.get('top1', 0)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[WARN] Failed to read JSON {json_name}: {e}")
+                else:
+                    print(f"[WARN] Missing JSON file: {json_name}")
 
-                # 2. Load Saleae Metrics
+                # Load Saleae Metrics
                 subdir_path = self.saleae_root / f"A_{alpha}" / f"D_{depth:02d}"
                 
                 inf_ms_hardware = np.nan
                 power_mw = np.nan
                 energy_mj = np.nan
 
-                if subdir_path.exists():
-                    raw_folders = list(subdir_path.rglob("saleae_raw"))
-                    if raw_folders:
-                        target_dir = raw_folders[0].parent
-                        try:
-                            parsed = SaleaeOutputParsing(target_dir)
-                            if parsed.avg_inference_time() is not None:
-                                inf_ms_hardware = parsed.avg_inference_time() * 1e3
-                                mean_pwr, _, mean_energy, _ = parsed.avg_power_measurement(psu_dc_volts, r_shunt)
-                                if mean_pwr and mean_energy:
-                                    power_mw = mean_pwr * 1e3
-                                    energy_mj = mean_energy * 1e3
-                        except Exception as e:
-                            print(f"[ERR] {target_dir.name}: {e}")
+                if not subdir_path.exists():
+                    continue
+
+                raw_folders = list(subdir_path.rglob("saleae_raw"))
+                if not raw_folders:
+                    print(f"[SKIP] No 'saleae_raw' found inside: {subdir_path}")
+                    continue
                 
-                model_name = f"Grid A{alpha} D{depth:02d}"
+                target_dir = raw_folders[0].parent
                 
-                if not np.isnan(inf_ms_hardware) and not np.isnan(energy_mj):
-                    data_rows.append({
-                        "Model name": model_name,
-                        "Alpha": alpha,
-                        "Depth": depth,
-                        "Top-1 Accuracy": top1,
-                        "Measured Inference Time (ms)": inf_ms_hardware,
-                        "Energy per Inference (mJ)": energy_mj,
-                        "Average Power (mW)": power_mw
-                    })
+                try:
+                    parsed = SaleaeOutputParsing(target_dir)
+                    
+                    if parsed.avg_inference_time() is None:
+                        print(f"[SKIP] {target_dir.name}: parsed.avg_inference_time() returned None")
+                        continue
+                        
+                    inf_ms_hardware = parsed.avg_inference_time() * 1e3
+                    mean_pwr, _, mean_energy, _ = parsed.avg_power_measurement(psu_dc_volts, r_shunt)
+                    
+                    if mean_pwr is None or mean_energy is None:
+                         print(f"[SKIP] {target_dir.name}: Power parsing returned None")
+                         continue
+
+                    power_mw = mean_pwr * 1e3
+                    energy_mj = mean_energy * 1e3
+
+                except Exception as e:
+                    print(f"[ERR]  Exception parsing {target_dir.name}: {e}")
+                    continue
+                
+                # success
+                model_name = f"Grid A{float(alpha)} D{depth:02d}"
+                
+                data_rows.append({
+                    "Model name": model_name,
+                    "Alpha": float(alpha),
+                    "Depth": depth,
+                    "Top-1 Accuracy": top1*100.0,
+                    "Measured Inference Time (ms)": inf_ms_hardware,
+                    "Energy per Inference (mJ)": energy_mj,
+                    "Average Power (mW)": power_mw
+                })
 
         self.df = pd.DataFrame(data_rows)
         
-        if not self.df.empty:
-            self.df["Inf_per_Sec"] = 1000.0 / self.df["Measured Inference Time (ms)"]
-            self.df["Inf_per_Joule"] = 1000.0 / self.df["Energy per Inference (mJ)"]
-            acc_frac = self.df["Top-1 Accuracy"]
-            self.df["Correct_Inf_per_Sec"] = self.df["Inf_per_Sec"] * acc_frac
-            self.df["Correct_Inf_per_Joule"] = self.df["Inf_per_Joule"] * acc_frac
-            print(f"[INFO] Loaded {len(self.df)} runs.")
+        if self.df.empty:
+            print("\n[CRITICAL] No valid runs were loaded! Check paths and debug messages above.")
+            return self.df
+
+        # Derived Metrics
+        self.df["Inf_per_Sec"] = 1000.0 / self.df["Measured Inference Time (ms)"]
+        self.df["Inf_per_Joule"] = 1000.0 / self.df["Energy per Inference (mJ)"]
+        acc_frac = self.df["Top-1 Accuracy"]*0.01
+        self.df["Correct_Inf_per_Sec"] = self.df["Inf_per_Sec"] * acc_frac
+        self.df["Correct_Inf_per_Joule"] = self.df["Inf_per_Joule"] * acc_frac
+        
+        print(f"\n[SUCCESS] Loaded {len(self.df)} runs successfully.")
         return self.df
 
     def find_champions(self):
-        """Identifies and returns the names of the two best models."""
         if self.df is None or self.df.empty: return None, None
-        
-        # Best Efficiency
         best_eff_idx = self.df["Correct_Inf_per_Joule"].idxmax()
         name_eff = self.df.loc[best_eff_idx, "Model name"]
-        
-        # Best Throughput
         best_rate_idx = self.df["Correct_Inf_per_Sec"].idxmax()
         name_rate = self.df.loc[best_rate_idx, "Model name"]
-
         print(f"\n[ANALYSIS] Champions:")
         print(f"  Efficiency: {name_eff}")
         print(f"  Throughput: {name_rate}")
         return name_eff, name_rate
 
-    # ------------------------------------------------------------------
-    # Plot 3D Surface (Flexible)
-    # ------------------------------------------------------------------
-    def plot_3d_surface(self, specific_models=None, filename="grid_3d_surface.png", title_suffix=""):
+
+    # standard metrics, sorted by energy per inference
+    def plot_standard_metrics(self, filename="grid_standard_metrics.png"):
         if self.df is None or self.df.empty: return
+        subset = self.df.sort_values("Energy per Inference (mJ)", ascending=True).copy()
+        names = subset["Model name"].tolist()
+        power = subset["Average Power (mW)"].to_numpy()
+        energy = subset["Energy per Inference (mJ)"].to_numpy()
+        latency = subset["Measured Inference Time (ms)"].to_numpy()
+        accuracy = subset["Top-1 Accuracy"].to_numpy()
 
-        fig = plt.figure(figsize=(12, 10))
-        ax = fig.add_subplot(111, projection='3d')
-
-        buffers = np.linspace(0.1, 10.0, 30) 
-        times = np.linspace(0.1, 10.0, 30)   
-        B_grid, T_grid = np.meshgrid(buffers, times)
-
-        # Filter Data
-        if specific_models:
-            subset = self.df[self.df["Model name"].isin(specific_models)]
-            alpha_val = 0.8  # Higher opacity for specific models
-        else:
-            subset = self.df # All models
-            alpha_val = 0.15 # Lower opacity to see through the clutter
-
-        cmap = plt.get_cmap("turbo") # High contrast colormap
-        unique_names = subset["Model name"].unique()
+        cmap = matplotlib.colormaps["viridis"]
+        colors = [cmap(i / len(names)) for i in range(len(names))]
+        x_pos = np.arange(len(names))
         
-        for idx, row in subset.iterrows():
-            name = row["Model name"]
-            acc_frac = row["Top-1 Accuracy"] / 100.0
-            energy_j = row["Energy per Inference (mJ)"] * 1e-3
-            lat_s = row["Measured Inference Time (ms)"] * 1e-3
-            
-            rate_e = acc_frac / energy_j 
-            rate_t = acc_frac / lat_s    
-            
-            Z = np.minimum(B_grid * rate_e, T_grid * rate_t)
-            
-            # Color based on alpha value in the model name (visual grouping)
-            c_val = (row["Alpha"] - 0.25) / 1.0  # Normalize 0.25-1.25 to 0-1
-            color = cmap(c_val)
-            
-            surf = ax.plot_surface(B_grid, T_grid, Z, alpha=alpha_val, color=color, label=name)
+        # INCREASED FIGSIZE
+        fig, axes = plt.subplots(nrows=4, ncols=1, sharex=True, figsize=(20, 22))
 
-        ax.set_title(f"3D Correct Inference Surface {title_suffix}", fontsize=16)
-        ax.set_xlabel("Energy Buffer (Joules)")
-        ax.set_ylabel("Pass Time (Seconds)")
-        ax.set_zlabel("Correct Inferences")
-        ax.view_init(elev=30, azim=135)
+        def plot_row(ax_idx, data, title, unit, ylim_top=None):
+            ax = axes[ax_idx]
+            ax.bar(x_pos, data, color=colors)
+            ax.set_title(title, fontsize=28) 
+            ax.set_ylabel(unit, fontsize=24)
+            ax.tick_params(axis="y", labelsize=20) 
+            if ylim_top: ax.set_ylim(0, ylim_top)
+            else: ax.set_ylim(0, max(data) * 1.15)
+            
+            # Value labels
+            for i, v in enumerate(data):
+                ax.text(x_pos[i], v * 1.02, f"{v:.1f}", ha="center", va="bottom", fontsize=18, rotation=45)
+
+        plot_row(0, power, "Average Power", "mW",1200)
+        plot_row(1, energy, "Energy per Inference", "mJ")
+        plot_row(2, latency, "Measured Latency", "ms")
+        plot_row(3, accuracy, "Top-1 Accuracy", "%", ylim_top=100)
         
-        # Legend (Simplify if too many)
-        if specific_models:
-            legend_elements = [Patch(facecolor=cmap((self.df.loc[self.df["Model name"]==m, "Alpha"].values[0]-0.25)), label=m) for m in specific_models]
-            ax.legend(handles=legend_elements)
-
-        out_path = self.output_dir / filename
-        plt.savefig(out_path, dpi=300, bbox_inches="tight")
-        print(f"[PLOT] Saved {out_path}")
+        axes[3].set_xticks(x_pos)
+        axes[3].set_xticklabels(names, rotation=45, ha="right", fontsize=18)
+        plt.tight_layout()
+        plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
+        print(f"[PLOT] Saved {filename}")
         plt.close()
 
-    # ------------------------------------------------------------------
-    # Other Plotting Functions (Overview, Frontier, Budget)
-    # ------------------------------------------------------------------
+    # Standard Metrics grouped by alpha, ordered by depth
+    def plot_grouped_metrics(self, filename="grid_grouped_metrics.png"):
+        """
+        Plots 4 rows (Power, Energy, Latency, Accuracy) grouped by Alpha.
+        Bars represent different Depths.
+        """
+        if self.df is None or self.df.empty: return
+
+        alphas = sorted(self.df['Alpha'].unique())
+        depths = sorted(self.df['Depth'].unique())
+        
+        x = np.arange(len(alphas))  # label locations for alphas
+        width = 0.8 / len(depths)   # width of individual bars
+
+        # Colors for depth levels
+        cmap = plt.get_cmap('magma_r') 
+        colors = cmap(np.linspace(0.2, 0.8, len(depths)))
+
+        fig, axes = plt.subplots(nrows=4, ncols=1, sharex=True, figsize=(20, 22))
+
+        # Helper to plot one metric
+        def plot_group_row(ax_idx, metric_col, title, ylabel, ylim_top=None):
+            ax = axes[ax_idx]
+            
+            for i, depth in enumerate(depths):
+                subset = self.df[self.df['Depth'] == depth]
+                
+                # Align values to correct alpha index
+                heights = []
+                for alpha in alphas:
+                    val = subset[subset['Alpha'] == alpha][metric_col]
+                    heights.append(val.item() if not val.empty else 0)
+                
+                offset = (i - len(depths)/2) * width + width/2
+                # Only label the first plot for the legend
+                label = f'Depth={depth}' if ax_idx == 0 else ""
+                rects = ax.bar(x + offset, heights, width, label=label, color=colors[i])
+                
+                # Optional: Add text labels on bars if needed (can get crowded)
+                for j, h in enumerate(heights):
+                    if h > 0: ax.text(x[j] + offset, h*1.01, f"{h:.1f}", ha='center', va='bottom', fontsize=18, rotation=45)
+
+            ax.set_title(title, fontsize=28)
+            ax.set_ylabel(ylabel, fontsize=24)
+            ax.tick_params(axis="y", labelsize=20)
+            ax.grid(True, axis='y', linestyle='--', alpha=0.3)
+            
+            if ylim_top: ax.set_ylim(0, ylim_top)
+            else: ax.autoscale(enable=True, axis='y', tight=False)
+
+        # Power
+        plot_group_row(0, "Average Power (mW)", "Average Power", "mW", ylim_top = 1500)
+        axes[0].legend(title="Network Depth", loc='upper left', fontsize=18, title_fontsize=20, ncol=len(depths))
+
+        # Energy
+        plot_group_row(1, "Energy per Inference (mJ)", "Energy per Inference", "mJ",60)
+
+        # Latency
+        plot_group_row(2, "Measured Inference Time (ms)", "Measured Latency", "ms",60)
+
+        # Accuracy
+        plot_group_row(3, "Top-1 Accuracy", "Top-1 Accuracy", "%", ylim_top=100)
+
+        # X-Axis
+        axes[3].set_xticks(x)
+        axes[3].set_xticklabels([f"Alpha {a}" for a in alphas], fontsize=22)
+        axes[3].set_xlabel("Width Multiplier (Alpha)", fontsize=24)
+
+        plt.tight_layout()
+        plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
+        print(f"[PLOT] Saved {filename}")
+        plt.close()
+
+    # Efficiency Overview
     def plot_efficiency_overview(self):
         if self.df is None or self.df.empty: return
         subset = self.df.sort_values("Correct_Inf_per_Joule", ascending=True).copy()
         names = subset["Model name"].tolist()
         cmap = plt.get_cmap("viridis")
-        fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(20, 10))
+        fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(24, 12))
         
         def plot_stack(ax, sort_col, total_col, correct_col, title, unit):
             sorted_df = self.df.sort_values(sort_col, ascending=True)
@@ -194,10 +276,11 @@ class GridStatsPlotting:
                 c_light = lighten_color(c_base, 0.5)
                 ax.bar(x[i], correct[i], color=c_base)
                 ax.bar(x[i], total[i] - correct[i], bottom=correct[i], color=c_light)
-            ax.set_title(title, fontsize=18)
-            ax.set_ylabel(unit, fontsize=16)
+            ax.set_title(title, fontsize=28)
+            ax.set_ylabel(unit, fontsize=24)
+            ax.tick_params(axis="y", labelsize=20)
             ax.set_xticks(x)
-            ax.set_xticklabels(local_names, rotation=90, fontsize=10)
+            ax.set_xticklabels(local_names, rotation=45, ha='right', fontsize=14)
         
         plot_stack(axes[0], "Correct_Inf_per_Sec", "Inf_per_Sec", "Correct_Inf_per_Sec", "Throughput", "Inf/s")
         plot_stack(axes[1], "Correct_Inf_per_Joule", "Inf_per_Joule", "Correct_Inf_per_Joule", "Efficiency", "Inf/J")
@@ -205,48 +288,100 @@ class GridStatsPlotting:
         plt.savefig(self.output_dir / "grid_efficiency_overview.png", dpi=300)
         plt.close()
 
+    # 3D Surface
+
+    def plot_3d_surface(self, specific_models=None, filename="grid_3d_surface.png", title_suffix=""):
+        if self.df is None or self.df.empty: return
+        fig = plt.figure(figsize=(16, 14))
+        ax = fig.add_subplot(111, projection='3d')
+        buffers = np.linspace(0.1, 10.0, 30) 
+        times = np.linspace(0.1, 10.0, 30)   
+        B_grid, T_grid = np.meshgrid(buffers, times)
+        
+        if specific_models:
+            subset = self.df[self.df["Model name"].isin(specific_models)]
+            alpha_val = 0.8
+        else:
+            subset = self.df
+            alpha_val = 0.15
+
+        cmap = plt.get_cmap("turbo") 
+        
+        for idx, row in subset.iterrows():
+            name = row["Model name"]
+            acc_frac = row["Top-1 Accuracy"] / 100.0
+            energy_j = row["Energy per Inference (mJ)"] * 1e-3
+            lat_s = row["Measured Inference Time (ms)"] * 1e-3
+            rate_e = acc_frac / energy_j 
+            rate_t = acc_frac / lat_s    
+            Z = np.minimum(B_grid * rate_e, T_grid * rate_t)
+            c_val = (row["Alpha"] - 0.25) / 1.0
+            color = cmap(c_val)
+            ax.plot_surface(B_grid, T_grid, Z, alpha=alpha_val, color=color, label=name)
+
+        ax.set_title(f"3D Correct Inference Surface {title_suffix}", fontsize=28)
+        ax.set_xlabel("Energy Buffer (Joules)", fontsize=20, labelpad=15)
+        ax.set_ylabel("Pass Time (Seconds)", fontsize=20, labelpad=15)
+        ax.set_zlabel("Correct Inferences", fontsize=20, labelpad=15)
+        ax.tick_params(axis='both', which='major', labelsize=14)
+        ax.view_init(elev=30, azim=135)
+        
+        if specific_models:
+            legend_elements = [Patch(facecolor=cmap((self.df.loc[self.df["Model name"]==m, "Alpha"].values[0]-0.25)), label=m) for m in specific_models]
+            ax.legend(handles=legend_elements, fontsize=18)
+            
+        plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
+        print(f"[PLOT] Saved {filename}")
+        plt.close()
+
+
+    # Decision Frontier
+
     def plot_decision_frontier(self, model_a_name, model_b_name):
         subset = self.df[self.df["Model name"].isin([model_a_name, model_b_name])].copy()
-        if len(subset) != 2: return
-
+        if len(subset) != 2: print("[ANALYSIS] The one True Model has been found");return
         subset["Slope"] = (subset["Top-1 Accuracy"]/100) / (subset["Energy per Inference (mJ)"]*1e-3)
         subset["Rate"]  = (subset["Top-1 Accuracy"]/100) / (subset["Measured Inference Time (ms)"]*1e-3)
         subset.sort_values("Slope", ascending=False, inplace=True)
-        
         m_eff, m_pwr = subset.iloc[0], subset.iloc[1]
         name_eff, name_pwr = m_eff["Model name"], m_pwr["Model name"]
         eff_rate, pwr_rate = m_eff["Rate"], m_pwr["Rate"]
         eff_slope, pwr_slope = m_eff["Slope"], m_pwr["Slope"]
 
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(14, 10))
         max_t = 10.0
         time_range = np.linspace(0, max_t, 200)
 
         if eff_rate >= pwr_rate:
             ax.fill_between(time_range, 0, max_t*1000, color='tab:blue', alpha=0.2)
-            ax.text(max_t*0.5, max_t*10, f"{name_eff} DOMINATES", ha='center', fontweight='bold')
+            ax.text(max_t*0.5, max_t*10, f"{name_eff} DOMINATES", ha='center', fontweight='bold', fontsize=24, bbox=dict(facecolor='white', alpha=0.8))
             title = f"{name_eff} Wins Globally"
         else:
             k = eff_rate / pwr_slope
             boundary_energy = time_range * k
-            ax.plot(time_range, boundary_energy, 'k--', linewidth=2)
+            ax.plot(time_range, boundary_energy, 'k--', linewidth=3)
             ax.fill_between(time_range, 0, boundary_energy, color='tab:blue', alpha=0.2)
-            ax.text(max_t*0.75, max(boundary_energy)*0.25, f"Use {name_eff}\n(Energy Limited)", ha='center', color='tab:blue')
+            ax.text(max_t*0.75, max(boundary_energy)*0.25, f"Use {name_eff}\n(Energy Limited)", ha='center', color='tab:blue', fontsize=20, fontweight='bold')
             ax.fill_between(time_range, boundary_energy, max(boundary_energy)*1.5, color='tab:orange', alpha=0.2)
-            ax.text(max_t*0.25, max(boundary_energy)*1.25, f"Use {name_pwr}\n(Time Limited)", ha='center', color='tab:orange')
+            ax.text(max_t*0.25, max(boundary_energy)*1.25, f"Use {name_pwr}\n(Time Limited)", ha='center', color='tab:orange', fontsize=20, fontweight='bold')
             ax.set_ylim(0, max(boundary_energy)*1.5)
             title = f"Decision Frontier: {name_eff} vs {name_pwr}"
 
-        ax.set_title(title, fontsize=16)
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Energy (J)")
+        ax.set_title(title, fontsize=28)
+        ax.set_xlabel("Time (s)", fontsize=24)
+        ax.set_ylabel("Energy (J)", fontsize=24)
+        ax.tick_params(axis='both', labelsize=20)
         ax.set_xlim(0, max_t)
         plt.savefig(self.output_dir / "grid_decision_frontier.png", dpi=300)
+        print(f"[PLOT] Saved grid_decision_frontier.png")
         plt.close()
 
+
+    # Budget Loop to generate excel tables
     def run_budget_loop(self, buffers, frame_times):
         if self.df is None or self.df.empty: return
-        with pd.ExcelWriter(self.output_dir / "grid_budget_tables.xlsx") as writer:
+        xl_path = self.output_dir / "grid_budget_tables.xlsx"
+        with pd.ExcelWriter(xl_path) as writer:
             for _, row in self.df.iterrows():
                 name = row["Model name"]
                 ej = row["Energy per Inference (mJ)"] * 1e-3
@@ -259,35 +394,37 @@ class GridStatsPlotting:
                         lim = "T" if (t/ls) < (b/ej) else "E"
                         grid[i, j] = f"{val} ({lim})"
                 pd.DataFrame(grid, index=[f"E:{b:.2f}" for b in buffers], columns=[f"T:{t:.2f}" for t in frame_times]).to_excel(writer, sheet_name=name.replace("Grid ", "").replace(" ", "_"))
+        print(f"[EXCEL] Saved {xl_path}")
 
 if __name__ == "__main__":
     REPO_ROOT = get_repo_root()
-    JSON_DIR = "/home/jackr/Repos/CoralGUI/libs/coral_tpu_characterization/data/tpunet_acc"
-    SALEAE_ROOT = "/home/jackr/Repos/CoralGUI/results/captures_1_20"
+    
+    # --- RELATIVE PATHS ---
+    JSON_DIR = REPO_ROOT / "data/tpunet_acc"
+    SALEAE_ROOT = REPO_ROOT / "../../results/captures_1_20" # so cursed
     OUTPUT_DIR = REPO_ROOT / "results/plots/grid_analysis"
 
     plotter = GridStatsPlotting(JSON_DIR, SALEAE_ROOT, OUTPUT_DIR)
     plotter.load_and_aggregate_data()
     
-    # 1. Overview
-    plotter.plot_efficiency_overview()
-    
-    # 2. Find Champions
-    eff, rate = plotter.find_champions()
+    if plotter.df is not None and not plotter.df.empty:
 
-    # 3. Plot 3D: ALL Models
-    plotter.plot_3d_surface(specific_models=None, filename="grid_3d_all.png", title_suffix="(All Models)")
-    
-    # 4. Plot 3D: Champions Only
-    if eff and rate:
-        # Use a list to ensure set logic doesn't remove duplicates if champions are same
-        champs = list(set([eff, rate]))
-        plotter.plot_3d_surface(specific_models=champs, filename="grid_3d_champions.png", title_suffix="(Champions Only)")
-        plotter.plot_decision_frontier(eff, rate)
+        plotter.plot_standard_metrics()
+        plotter.plot_grouped_metrics()
+        plotter.plot_efficiency_overview()
+        eff, rate = plotter.find_champions()
 
-    # 5. Budget Tables
-    buffers = [0.5 * c * 25 for c in [0.01, 0.1, 1.0, 5.0]]
-    times = [1.0, 5.0, 10.0, 30.0, 60.0]
-    plotter.run_budget_loop(sorted(buffers), times)
-    
-    print("[DONE] Generated all plots.")
+        plotter.plot_3d_surface(specific_models=None, filename="grid_3d_all.png", title_suffix="(All Models)")
+        if eff and rate:
+            champs = list(set([eff, rate]))
+            plotter.plot_3d_surface(specific_models=champs, filename="grid_3d_champions.png", title_suffix="(Champions Only)")
+            plotter.plot_decision_frontier(eff, rate)
+
+
+        buffers = [0.5 * c * 25 for c in [0.01, 0.1, 1.0, 5.0]]
+        times = [1.0, 5.0, 10.0, 30.0, 60.0]
+        plotter.run_budget_loop(sorted(buffers), times)
+        
+        print("\n[DONE] Script completed successfully.")
+    else:
+        print("\n[FAIL] Script ended without generating plots due to missing data.")
