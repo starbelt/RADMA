@@ -2,7 +2,8 @@ coralmicro
 data/val/coco
 data/val/imagenet
 Hidden_models
-data/models
+data/models/Image_Classification
+data/models/Object_Detection
 out
 .idea
 cmake-build-debug
