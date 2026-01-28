@@ -150,7 +150,10 @@ class GridStatsPlotting:
         energy = subset["Energy per Inference (mJ)"].to_numpy()
         latency = subset["Measured Inference Time (ms)"].to_numpy()
         accuracy = subset["Top-1 Accuracy"].to_numpy()
-
+        # param = ParamCounts()
+        # param_counts = [x/1e6 for x in pc.scan_models()]
+        # TODO: Plot param count
+        
         cmap = matplotlib.colormaps["viridis"]
         colors = [cmap(i / len(names)) for i in range(len(names))]
         x_pos = np.arange(len(names))
