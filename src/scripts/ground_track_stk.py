@@ -6,8 +6,7 @@ from path_utils import get_repo_root
 def ground_track_plots(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename='ground_track_stk.png'):
     df.columns = df.columns.str.strip()
     
-    # robust slicing: find the first perigee and the next one
-    # if true anomaly isn't perfectly 0 to 360, we find the "reset" point
+    # slice by true anomaly
     diffs = df['True Anomaly (deg)'].diff()
     # a huge negative jump indicates the orbit reset (e.g., 359 -> 0.1)
     reset_indices = df.index[diffs < -300].tolist()
@@ -36,21 +35,21 @@ def ground_track_plots(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename='grou
 
     # plot altitude 
     ax1.plot(x, df_orbit['Alt (km)'], color='green')
-    ax1.set_ylabel('altitude (km)')
-    ax1.set_title('orbital altitude')
+    ax1.set_ylabel('Altitude (km)')
+    ax1.set_title('Orbital Altitude')
     ax1.grid(True, alpha=0.3)
 
     # plot ground speed
     ax2.plot(x, df_orbit['v_ground'], color='blue')
-    ax2.set_ylabel('ground speed (km/s)')
-    ax2.set_title('speed relative to surface')
+    ax2.set_ylabel('Ground Speed (km/s)')
+    ax2.set_title('Speed Relative to Surface')
     ax2.grid(True, alpha=0.3)
 
     # plot tpu throughput required
     ax3.plot(x, df_orbit['tiles_per_sec'], color='orange')
-    ax3.set_ylabel('tiles / sec')
-    ax3.set_xlabel('true anomaly (deg) [0=perigee]')
-    ax3.set_title(f'tpu workload ({sensor_res}px sensor)')
+    ax3.set_ylabel('Tiles / sec')
+    ax3.set_xlabel('True Anomaly (deg)')
+    ax3.set_title(f'TPU Workload ({sensor_res} px Sensor)')
     ax3.grid(True, alpha=0.3)
 
     # mark critical points
@@ -77,4 +76,3 @@ if __name__ == "__main__":
     Model_Input_dim = 224 # px tile size
 
     ground_track_plots(df, filename = str(plotdir / "ground_track.png"))
-    
