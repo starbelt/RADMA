@@ -10,6 +10,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 from saleae_parsing import SaleaeOutputParsing
 from path_utils import get_repo_root
+from ParamCounts import ParamCounts
 
 
 plt.rcParams.update({'font.size': 16})  # Base font size
@@ -23,6 +24,7 @@ def lighten_color(color, factor=0.5):
 class GridStatsPlotting:
     def __init__(self, json_dir, saleae_root, output_dir):
         self.json_dir = pathlib.Path(json_dir)
+        self.modeldir = self.json_dir.parent / "custom"
         self.saleae_root = pathlib.Path(saleae_root)
         self.output_dir = pathlib.Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -44,7 +46,13 @@ class GridStatsPlotting:
         if not self.saleae_root.exists():
             print(f"[CRITICAL] Saleae root does not exist: {self.saleae_root}")
             return None
-
+        if not self.modeldir.exists():
+            print(f"[CRITICAL] model root does not exist: {self.modeldir}")
+            return None
+        
+        # Check param counts
+        param_counts = ParamCounts(self.modeldir).scan_models()
+        
         for alpha in alphas:
             for depth in depths:
                 # Load JSON Metrics
@@ -111,6 +119,7 @@ class GridStatsPlotting:
                     "Measured Inference Time (ms)": inf_ms_hardware,
                     "Energy per Inference (mJ)": energy_mj,
                     "Average Power (mW)": power_mw
+                    "Parameter Count" :
                 })
 
         self.df = pd.DataFrame(data_rows)
@@ -150,7 +159,7 @@ class GridStatsPlotting:
         energy = subset["Energy per Inference (mJ)"].to_numpy()
         latency = subset["Measured Inference Time (ms)"].to_numpy()
         accuracy = subset["Top-1 Accuracy"].to_numpy()
-        # param = ParamCounts()
+
         # param_counts = [x/1e6 for x in pc.scan_models()]
         # TODO: Plot param count
         

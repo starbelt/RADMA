@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import os
-import sys
+import os, json, os
 import flatbuffers
 import tflite
 import numpy as np
@@ -73,39 +72,30 @@ class ParamCounts:
         """
 
         results = []
+        results_dict = {}
         #print(f"Scanning: {self.dir}")
         for root, dirs, files in os.walk(self.dir):
-            dirs.sort()   # ensures alphabetical walk of subdirs
-            if os.path.basename(root) == "CPU_ref":
-                for f in sorted(files):
-                    if f.endswith(".tflite"):
-                        model_path = os.path.join(root, f)
-                        try:
-                            count = count_tflite_params(model_path)
-                            results.append(count)
-                            if self.verbose:
-                                print(f"{f}: {count:,}")
-                        except Exception as e:
-                            results.append(None)  # placeholder if error
-                            if self.verbose:
-                                print(f"{f}: Error - {e}")
-        return results
+            dirs.sort()   # ensures alphabetical walk of subdirs:
+            for f in sorted(files):
+                if f.endswith(".tflite"):
+                    model_path = os.path.join(root, f)
+                    try:
+                        count = count_tflite_params(model_path)
+                        results.append(count)
+                        results_dict[f] = count
+                        if self.verbose:
+                            print(f"{f}: {count:,}")
+                    except Exception as e:
+                        results.append(None)  # placeholder if error
+                        if self.verbose:
+                            print(f"{f}: Error - {e}")
+        return results, results_dict
 
 
 if __name__ == "__main__":
-    # if len(sys.argv) < 2:
-    #     print("Usage: python scan_models.py path/to/base_dir [--verbose]")
-    #     sys.exit(1)
-    #
-    # base_dir = sys.argv[1]
-    # verbose = "--verbose" in sys.argv[2:]
-    # pc = Param_Counts(base_dir, verbose=verbose)
-    # results = pc.scan_models()
-    #
-    # print("\nParameter counts:")
-    # print(results)
 
-    base_dir = "~/Coral-TPU-Characterization/data/models/Image_Classification/"
+    base_dir = "/home/jackr/Dev/repos/TPU-Model-Training/results/model_sweeps/tflite_models"
     pc = ParamCounts(base_dir)
-    results = pc.scan_models()
-    print(results)
+    results,mapped = pc.scan_models()
+    
+    json.dump(mapped, open("param_counts.json", "w"))
