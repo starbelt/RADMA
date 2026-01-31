@@ -24,7 +24,7 @@ def lighten_color(color, factor=0.5):
 class GridStatsPlotting:
     def __init__(self, json_dir, saleae_root, output_dir):
         self.json_dir = pathlib.Path(json_dir)
-        self.modeldir = self.json_dir.parent / "models/custom"
+        self.modeldir = self.json_dir.parent / "models/custom/tfliteCPU"
         self.saleae_root = pathlib.Path(saleae_root)
         self.output_dir = pathlib.Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -159,6 +159,7 @@ class GridStatsPlotting:
         energy = subset["Energy per Inference (mJ)"].to_numpy()
         latency = subset["Measured Inference Time (ms)"].to_numpy()
         accuracy = subset["Top-1 Accuracy"].to_numpy()
+        paramcount = subset["Parameter Count"].to_numpy()
 
         # param_counts = [x/1e6 for x in pc.scan_models()]
         # TODO: Plot param count
@@ -168,7 +169,7 @@ class GridStatsPlotting:
         x_pos = np.arange(len(names))
         
         # INCREASED FIGSIZE
-        fig, axes = plt.subplots(nrows=4, ncols=1, sharex=True, figsize=(20, 22))
+        fig, axes = plt.subplots(nrows=5, ncols=1, sharex=True, figsize=(20, 22))
 
         def plot_row(ax_idx, data, title, unit, ylim_top=None):
             ax = axes[ax_idx]
@@ -183,10 +184,11 @@ class GridStatsPlotting:
             for i, v in enumerate(data):
                 ax.text(x_pos[i], v * 1.02, f"{v:.1f}", ha="center", va="bottom", fontsize=18, rotation=45)
 
-        plot_row(0, power, "Average Power", "mW",1200)
-        plot_row(1, energy, "Energy per Inference", "mJ")
-        plot_row(2, latency, "Measured Latency", "ms")
-        plot_row(3, accuracy, "Top-1 Accuracy", "%", ylim_top=100)
+        plot_row(0, paramcount * 1e-6, "Parameter Count", "Millions")
+        plot_row(1, power, "Average Power", "mW",1200)
+        plot_row(2, energy, "Energy per Inference", "mJ")
+        plot_row(3, latency, "Measured Latency", "ms")
+        plot_row(4, accuracy, "Top-1 Accuracy", "%", ylim_top=100)
         
         axes[3].set_xticks(x_pos)
         axes[3].set_xticklabels(names, rotation=45, ha="right", fontsize=18)
@@ -217,6 +219,7 @@ class GridStatsPlotting:
 
         # Helper to plot one metric
         def plot_group_row(ax_idx, metric_col, title, ylabel, ylim_top=None):
+            if self.df is None or self.df.empty: return # How do i handle var scope here?
             ax = axes[ax_idx]
             
             for i, depth in enumerate(depths):
@@ -350,6 +353,9 @@ class GridStatsPlotting:
     # Decision Frontier
 
     def plot_decision_frontier(self, model_a_name, model_b_name):
+        if self.df is None or self.df.empty:
+            print("No data to plot decision frontier")
+            return  
         subset = self.df[self.df["Model name"].isin([model_a_name, model_b_name])].copy()
         if len(subset) != 2: print("[ANALYSIS] The one True Model has been found");return
         subset["Slope"] = (subset["Top-1 Accuracy"]/100) / (subset["Energy per Inference (mJ)"]*1e-3)

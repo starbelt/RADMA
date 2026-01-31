@@ -32,26 +32,29 @@ def count_tflite_params(model_path):
         buf = f.read()
     model = tflite.Model.GetRootAsModel(buf, 0)
 
-    if model.SubgraphsLength() == 0:
+    if model.SubgraphsLength() == 0 or model.Subgraphs(0) is None:
         raise RuntimeError("No subgraphs found in model")
+    
     subgraph = model.Subgraphs(0)
+
     buf_to_tensors = {}
 
-    for ti in range(subgraph.TensorsLength()):
-        tensor = subgraph.Tensors(ti)
-        bidx = tensor.Buffer()
+
+    for ti in range(subgraph.TensorsLength()): #type: ignore # tpye check happens above - pylance is confused.
+        tensor = subgraph.Tensors(ti) #type: ignore
+        bidx = tensor.Buffer() #type: ignore
         if bidx and bidx > 0:
             buf_to_tensors.setdefault(bidx, []).append(ti)
     total_params = 0
 
     for bidx, tensor_idxs in buf_to_tensors.items():
         bufobj = model.Buffers(bidx)
-        data_len = bufobj.DataLength()
+        data_len = bufobj.DataLength() #type: ignore
 
         if data_len == 0:
             continue
 
-        rep_tensor = subgraph.Tensors(tensor_idxs[0])
+        rep_tensor = subgraph.Tensors(tensor_idxs[0]) #type: ignore
         bpe = bytes_per_element_from_tensor(rep_tensor)
         elems = data_len // bpe if bpe > 0 else 0
         total_params += elems
