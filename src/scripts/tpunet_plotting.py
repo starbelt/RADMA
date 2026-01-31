@@ -89,6 +89,7 @@ class GridStatsPlotting:
                 
                 try:
                     parsed = SaleaeOutputParsing(target_dir)
+                    print(f"  > Processing: {target_dir.name}...", flush=True)
                     
                     if parsed.avg_inference_time() is None:
                         print(f"[SKIP] {target_dir.name}: parsed.avg_inference_time() returned None")

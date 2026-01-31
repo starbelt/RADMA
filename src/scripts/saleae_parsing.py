@@ -284,13 +284,20 @@ class SaleaeOutputParsing:
             energies = []
             durations = []
 
-            for t_start, t_end in zip(self.rising, self.falling):
-                mask = (self.t_analog >= t_start) & (self.t_analog <= t_end)
-                if not mask.any():
+            start_indices = np.searchsorted(self.t_analog, self.rising)
+            end_indices = np.searchsorted(self.t_analog, self.falling)
+
+            for s_idx, e_idx in zip(start_indices, end_indices):
+                # Safety check: ensure indices are within bounds and valid
+                if s_idx >= len(self.t_analog) or s_idx >= e_idx:
                     continue
 
-                t_window = self.t_analog[mask]
-                p_window = p_inst[mask]
+                # Direct slicing instead of masking
+                t_window = self.t_analog[s_idx:e_idx]
+                p_window = p_inst[s_idx:e_idx]
+                
+                if len(t_window) < 2: 
+                    continue
 
                 energy = np.trapezoid(p_window, t_window)   # Joules
                 duration = t_window[-1] - t_window[0]
