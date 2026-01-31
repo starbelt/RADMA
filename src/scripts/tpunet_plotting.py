@@ -120,7 +120,7 @@ class GridStatsPlotting:
                     "Measured Inference Time (ms)": inf_ms_hardware,
                     "Energy per Inference (mJ)": energy_mj,
                     "Average Power (mW)": power_mw,
-                    "Parameter Count" : pc_dict.get(f"Grid_A{float(alpha)}_D{depth:02d}_quant.tflite", np.nan)
+                    "Parameter Count (M)" : pc_dict.get(f"Grid_A{float(alpha)}_D{depth:02d}_quant.tflite", np.nan)*1e-6 # in millions
                 })
 
         self.df = pd.DataFrame(data_rows)
@@ -160,7 +160,7 @@ class GridStatsPlotting:
         energy = subset["Energy per Inference (mJ)"].to_numpy()
         latency = subset["Measured Inference Time (ms)"].to_numpy()
         accuracy = subset["Top-1 Accuracy"].to_numpy()
-        paramcount = subset["Parameter Count"].to_numpy()
+        paramcount = subset["Parameter Count (M)"].to_numpy()
 
         # param_counts = [x/1e6 for x in pc.scan_models()]
         # TODO: Plot param count
@@ -185,7 +185,7 @@ class GridStatsPlotting:
             for i, v in enumerate(data):
                 ax.text(x_pos[i], v * 1.02, f"{v:.1f}", ha="center", va="bottom", fontsize=18, rotation=45)
 
-        plot_row(0, paramcount * 1e-6, "Parameter Count", "Millions")
+        plot_row(0, paramcount, "Parameter Count", "Millions")
         plot_row(1, power, "Average Power", "mW",1200)
         plot_row(2, energy, "Energy per Inference", "mJ")
         plot_row(3, latency, "Measured Latency", "ms")
@@ -216,7 +216,7 @@ class GridStatsPlotting:
         cmap = plt.get_cmap('magma_r') 
         colors = cmap(np.linspace(0.2, 0.8, len(depths)))
 
-        fig, axes = plt.subplots(nrows=4, ncols=1, sharex=True, figsize=(20, 22))
+        fig, axes = plt.subplots(nrows=5, ncols=1, sharex=True, figsize=(20, 22))
 
         # Helper to plot one metric
         def plot_group_row(ax_idx, metric_col, title, ylabel, ylim_top=None):
@@ -249,18 +249,21 @@ class GridStatsPlotting:
             if ylim_top: ax.set_ylim(0, ylim_top)
             else: ax.autoscale(enable=True, axis='y', tight=False)
 
-        # Power
-        plot_group_row(0, "Average Power (mW)", "Average Power", "mW", ylim_top = 1500)
-        axes[0].legend(title="Network Depth", loc='upper left', fontsize=18, title_fontsize=20, ncol=len(depths))
+        # Parameter Count
+        plot_group_row(0, "Parameter Count (M)", "Parameter Count", "Millions", ylim_top = 12)
+        axes[0].legend(title="Depthwise Seperable Layer Repeats", loc='upper left', fontsize=18, title_fontsize=20, ncol=len(depths))
 
+        # Power
+        plot_group_row(1, "Average Power (mW)", "Average Power", "mW", ylim_top = 1400)
+        
         # Energy
-        plot_group_row(1, "Energy per Inference (mJ)", "Energy per Inference", "mJ",60)
+        plot_group_row(2, "Energy per Inference (mJ)", "Energy per Inference", "mJ",80)
 
         # Latency
-        plot_group_row(2, "Measured Inference Time (ms)", "Measured Latency", "ms",60)
+        plot_group_row(3, "Measured Inference Time (ms)", "Measured Latency", "ms",90)
 
         # Accuracy
-        plot_group_row(3, "Top-1 Accuracy", "Top-1 Accuracy", "%", ylim_top=100)
+        plot_group_row(4, "Top-1 Accuracy", "Top-1 Accuracy", "%", ylim_top=100)
 
         # X-Axis
         axes[3].set_xticks(x)
