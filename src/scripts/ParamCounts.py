@@ -89,6 +89,7 @@ class ParamCounts:
                         results.append(None)  # placeholder if error
                         if self.verbose:
                             print(f"{f}: Error - {e}")
+                    if len(results) == 0: print("No models found to check!")
         return results, results_dict
 
 

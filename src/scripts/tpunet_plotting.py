@@ -24,7 +24,7 @@ def lighten_color(color, factor=0.5):
 class GridStatsPlotting:
     def __init__(self, json_dir, saleae_root, output_dir):
         self.json_dir = pathlib.Path(json_dir)
-        self.modeldir = self.json_dir.parent / "custom"
+        self.modeldir = self.json_dir.parent / "models/custom"
         self.saleae_root = pathlib.Path(saleae_root)
         self.output_dir = pathlib.Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -32,7 +32,7 @@ class GridStatsPlotting:
 
     def load_and_aggregate_data(self):
         alphas = ["0.25", "0.50", "0.75", "1.0", "1.25"]
-        depths = [2, 4, 6, 8, 10]
+        depths = [2, 4, 6, 8, 10, 12]
         
         data_rows = []
         psu_dc_volts = 5.0
@@ -51,7 +51,7 @@ class GridStatsPlotting:
             return None
         
         # Check param counts
-        param_counts = ParamCounts(self.modeldir).scan_models()
+        pc_list, pc_dict = ParamCounts(self.modeldir).scan_models()
         
         for alpha in alphas:
             for depth in depths:
@@ -118,8 +118,8 @@ class GridStatsPlotting:
                     "Top-1 Accuracy": top1*100.0,
                     "Measured Inference Time (ms)": inf_ms_hardware,
                     "Energy per Inference (mJ)": energy_mj,
-                    "Average Power (mW)": power_mw
-                    "Parameter Count" :
+                    "Average Power (mW)": power_mw,
+                    "Parameter Count" : pc_dict.get(f"Grid_A{float(alpha)}_D{depth:02d}_quant.tflite", np.nan)
                 })
 
         self.df = pd.DataFrame(data_rows)
