@@ -277,35 +277,80 @@ class GridStatsPlotting:
 
     # Efficiency Overview
     def plot_efficiency_overview(self):
-        if self.df is None or self.df.empty: return
+        if self.df is None or self.df.empty:
+            return
+
         subset = self.df.sort_values("Correct_Inf_per_Joule", ascending=True).copy()
         names = subset["Model name"].tolist()
         cmap = plt.get_cmap("viridis")
         fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(24, 12))
-        
+
         def plot_stack(ax, sort_col, total_col, correct_col, title, unit):
             sorted_df = self.df.sort_values(sort_col, ascending=True)
             local_names = sorted_df["Model name"].tolist()
             total = sorted_df[total_col].to_numpy()
             correct = sorted_df[correct_col].to_numpy()
+
             x = np.arange(len(local_names))
-            local_colors = [cmap(i/len(local_names)) for i in range(len(local_names))]
+            local_colors = [cmap(i / len(local_names)) for i in range(len(local_names))]
+
             for i in range(len(x)):
                 c_base = local_colors[i]
                 c_light = lighten_color(c_base, 0.5)
+
                 ax.bar(x[i], correct[i], color=c_base)
                 ax.bar(x[i], total[i] - correct[i], bottom=correct[i], color=c_light)
+
+                # --- value annotations (1 decimal place) ---
+                ax.text(
+                    x[i],
+                    correct[i] / 2,
+                    f"{correct[i]:.1f}",
+                    ha="center",
+                    va="center",
+                    fontsize=12,
+                    color="white",
+                    fontweight="bold",
+                )
+
+                ax.text(
+                    x[i],
+                    total[i],
+                    f"{total[i]:.1f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=12,
+                    color="black",
+                )
+
             ax.set_title(title, fontsize=28)
             ax.set_ylabel(unit, fontsize=24)
             ax.tick_params(axis="y", labelsize=20)
             ax.set_xticks(x)
-            ax.set_xticklabels(local_names, rotation=45, ha='right', fontsize=14)
-        
-        plot_stack(axes[0], "Correct_Inf_per_Sec", "Inf_per_Sec", "Correct_Inf_per_Sec", "Throughput", "Inf/s")
-        plot_stack(axes[1], "Correct_Inf_per_Joule", "Inf_per_Joule", "Correct_Inf_per_Joule", "Efficiency", "Inf/J")
+            ax.set_xticklabels(local_names, rotation=45, ha="right", fontsize=14)
+
+        plot_stack(
+            axes[0],
+            "Correct_Inf_per_Sec",
+            "Inf_per_Sec",
+            "Correct_Inf_per_Sec",
+            "Throughput",
+            "Inf/s",
+        )
+
+        plot_stack(
+            axes[1],
+            "Correct_Inf_per_Joule",
+            "Inf_per_Joule",
+            "Correct_Inf_per_Joule",
+            "Efficiency",
+            "Inf/J",
+        )
+
         plt.tight_layout()
         plt.savefig(self.output_dir / "grid_efficiency_overview.png", dpi=300)
         plt.close()
+
 
     # 3D Surface
 

@@ -8,19 +8,21 @@ import tpunet_plotting as mdl
 
 class SatelliteInferenceSim:
     DEFAULT_CONFIG = {
-        'fov': 2.0,              # Sensor FOV (deg)
-        'target_patch_km': 5.0,  # Constant Ground Feature Size (km)
-        'sun_power_mw': 2500.0,  # Power available from Solar (mW)
-        'eclipse_power_mw': 150.0, # Power available from Battery (mW)
-        'tpu_dim': 224,          # Pixel input size for TPU
-        'sensor_res': 4096,      # Camera Resolution (px)
-        'min_pixels': 100,        # Minimum pixels to attempt detection
-        'solar_margin': 0.90,    # Safety margin for power fluctuations
+        'fov': 2.0,                # Sensor FOV (deg)
+        'target_patch_km': 5.0,    # Ground feature size
+        'tpu_dim': 224,            # TPU Input size
+        'sensor_res': 4096,        # Camera Res
+        'min_pixels': 10,          # Blindness threshold
         
-        # New Hysteresis / Switching Parameters
-        # TODO: Get some lab measurements for these once the RTOS app is up and running
-        'switch_latency_s': 0.0, # Time cost to load new weights 
-        'switch_energy_mj': 0.0 # Energy cost to load new weights
+        # Make real values here
+        'battery_capacity_wh': 100,  # Super-Cap Capacity in Watt-Hours
+        'solar_generation_mw': 100.0, # Rate of energy harvesting in Sun
+        'system_baseload_mw': 100.0,  # Constant power draw (radio/heater/computer idle)
+        'initial_charge_pct': 1.0,   # Start simulation at 100% battery
+        
+        # Switching
+        'switch_latency_s': 0.0, 
+        'switch_energy_mj': 0.0 
     }
 
     def __init__(self, orbit_data_path, model_json_dir, saleae_root, output_dir, config=None):
@@ -29,19 +31,20 @@ class SatelliteInferenceSim:
         self.config = self.DEFAULT_CONFIG.copy()
         if config: self.config.update(config)
 
+        # Convert Wh to Joules for internal math (1 Wh = 3600 J)
+        self.BATTERY_CAPACITY_J = self.config['battery_capacity_wh'] * 3600.0
+        
         print("--- Loading Data ---")
         self.models = self._load_models(model_json_dir, saleae_root)
         self.df = self._load_orbit(orbit_data_path)
         
-        print("--- Calculating Resource Budgets ---")
-        self.df = self.calculate_physics_and_budgets(self.df)
+        print("--- Pre-calculating Geometry ---")
+        self.df = self.calculate_geometry_and_workload(self.df)
 
     def _load_models(self, json_dir, saleae_root):
         plotter = mdl.GridStatsPlotting(json_dir, saleae_root, self.output_dir)
         df = plotter.load_and_aggregate_data()
         if df is None or df.empty: raise ValueError("No model data found.")
-        
-        # Standardize units
         df['acc_decimal'] = df['Top-1 Accuracy'] / 100.0
         df['lat_sec'] = df['Measured Inference Time (ms)'] / 1000.0
         return df
@@ -56,343 +59,329 @@ class SatelliteInferenceSim:
         return df
 
     # ==========================================
-    # ORBITAL PHYSICS & RESOURCE BUDGETS
+    # 1. GEOMETRY & WORKLOAD (Stateless)
     # ==========================================
-
-    def calculate_physics_and_budgets(self, df):
-        df = self._calc_geometry(df)
-        df = self._calc_dynamic_workload(df)
-        df = self._calc_power_limits(df)
-        return df
-
-    def _calc_geometry(self, df):
-        # Calculate how fast ground passes under the sensor
+    def calculate_geometry_and_workload(self, df):
+        # Physics
         fov_rad = np.deg2rad(self.config['fov'])
         df['v_ground'] = np.sqrt(df['vx (km/sec)']**2 + df['vy (km/sec)']**2 + df['vz (km/sec)']**2)
-        
-        # Calculate the physical width of the view
         df['swath_km'] = 2 * df['Alt (km)'] * np.tan(fov_rad / 2)
+        df['dwell_time_s'] = df['swath_km'] / df['v_ground']
         
-        # Time budget: How long we can dwell on this frame before it's gone
-        df['budget_time_s'] = df['swath_km'] / df['v_ground']
-        return df
-
-    def _calc_dynamic_workload(self, df):
+        # Workload (Dynamic Tiling)
         target_km = self.config['target_patch_km']
         res = self.config['sensor_res']
         tpu_dim = self.config['tpu_dim']
-
-        # Determine Pixel Density
+        
         df['px_per_patch'] = (res / df['swath_km']) * target_km
-        
-        # Determine Regime: Are we upscaling (Tiling) or downscaling (Aggregation)?
-        # Ratio > 1.0 means tiling. Ratio < 1.0 means aggregation.
-        df['infs_per_patch_raw'] = (df['px_per_patch'] / tpu_dim)**2
-        
-        # Check Blindness: If features are too small (e.g. 5px), we can't see them.
         df['infs_per_patch'] = np.where(df['px_per_patch'] < self.config['min_pixels'], 
                                         0.0, 
-                                        df['infs_per_patch_raw'])
+                                        (df['px_per_patch'] / tpu_dim)**2)
         
-        # Calculate Total TPU Operations needed for the frame
         patches_in_view = (df['swath_km']**2) / (target_km**2)
-        
-        # We must execute an integer number of inferences
         df['n_inferences_req'] = np.ceil(patches_in_view * df['infs_per_patch'])
         
-        return df
-
-    def _calc_power_limits(self, df):
-        # TODO: This seems to reset every frame, need to track battery over time - swap to some sort of mW/sec during solar gained instead of static buffer
-        # Identify Eclipse (Apogee region for this orbit)
+        # Power Generation Potential (Not Budget yet)
+        # Eclipse is 180-360 deg
         df['is_eclipse'] = (df['True Anomaly (deg)'] >= 180) & (df['True Anomaly (deg)'] <= 360)
         
-        # Set Power Limits (Solar vs Battery)
-        solar_avail = self.config['sun_power_mw'] * self.config['solar_margin']
-        batt_avail  = self.config['eclipse_power_mw']
-        df['power_limit_mw'] = np.where(df['is_eclipse'], batt_avail, solar_avail)
+        # Generation Rate (mW)
+        df['gen_rate_mw'] = np.where(df['is_eclipse'], 0.0, self.config['solar_generation_mw'])
         
-        # Total Energy Budget for this frame (Power * Time)
-        df['budget_energy_mj'] = df['power_limit_mw'] * df['budget_time_s']
+        # Energy In per Frame (Joules) = Rate * Time / 1000
+        df['energy_harvested_j'] = (df['gen_rate_mw'] * df['dwell_time_s']) / 1000.0
+        
+        # Baseload Energy Cost per Frame (Joules)
+        df['energy_baseload_j'] = (self.config['system_baseload_mw'] * df['dwell_time_s']) / 1000.0
+
         return df
 
     # ==========================================
-    # DECISION TREE
+    # 2. SEQUENTIAL SIMULATION ENGINE
     # ==========================================
-
-    def _evaluate_model_at_step(self, limit_t, limit_e, req_inf, lat, eng, acc):
+    
+    def _evaluate_step_sequential(self, current_battery_j, harvested_j, baseload_j, dwell_time_s, req_inf, 
+                                  lat, eng, acc, switching_penalty_j=0, switching_penalty_s=0):
         """
-        Calculates how many accurate inferences a model can perform 
-        given specific Time and Energy limits.
+        Determines if a specific model can run given the CURRENT battery state.
+        Returns: (Score, Raw_Inferences, Energy_Consumed_J, Status)
         """
-        if req_inf <= 0: return 0, 0, "Blind"
+        # 1. Blind check
+        if req_inf <= 0:
+            # We still pay baseload!
+            return 0, 0, baseload_j, "Blind"
 
-        # You can't run half an inference.
-        cap_time = np.floor(limit_t / lat)
-        cap_eng  = np.floor(limit_e / eng)
+        # 2. Net Available Energy
+        # We start with battery + what we harvest during the frame
+        # We must subtract baseload and switching costs first
+        available_energy_j = current_battery_j + harvested_j - baseload_j - switching_penalty_j
         
-        # Actual inferences run is limited by Capacity AND Requirement
-        # We don't run more than the job requires.
-        actual_runs = np.minimum(np.minimum(cap_time, cap_eng), req_inf)
+        # 3. Available Time
+        available_time_s = dwell_time_s - switching_penalty_s
+
+        # If baseload killed the battery, we are dead.
+        if available_energy_j <= 0:
+            return 0, 0, current_battery_j + harvested_j, "DeadBattery"
+
+        # 4. Capacity Calculation
+        # How many inferences fit in the Remaining Energy?
+        # Energy per inf is in mJ, convert to J
+        eng_j = eng / 1000.0
+        cap_eng = np.floor(available_energy_j / eng_j)
         
-        # Score Calculation
+        # How many fit in Time?
+        cap_time = np.floor(available_time_s / lat)
+        
+        # 5. Actual execution
+        actual_runs = np.minimum(np.minimum(cap_eng, cap_time), req_inf)
+        
+        # 6. Total Consumption
+        # Baseload + Switch + (Inferences * EnergyPerInf)
+        total_consumed_j = baseload_j + switching_penalty_j + (actual_runs * eng_j)
+        
         score = actual_runs * acc
         
-        # Status determination
-        if actual_runs >= req_inf:
-            status = "Success"
-        elif actual_runs > 0:
-            status = "Partial"
-        else:
-            status = "Fail"
+        if actual_runs >= req_inf: status = "Success"
+        elif actual_runs > 0:      status = "Partial"
+        else:                      status = "Fail"
             
-        return score, actual_runs, status
+        return score, actual_runs, total_consumed_j, status
 
-    def run_optimization(self):
-        print("--- Running Dynamic Optimization ---")
+    def run_dynamic_optimization(self):
+        print("--- Running Sequential Dynamic Optimization ---")
         
-        # Extract model arrays for faster looping
+        # State Initialization
+        curr_battery_j = self.BATTERY_CAPACITY_J * self.config['initial_charge_pct']
+        
+        # Results containers
+        res_model = []
+        res_acc = []
+        res_status = []
+        res_battery = [] # Track SoC over time
+        
+        prev_model_idx = -1
         model_names = self.models['Model name'].values
         m_lat = self.models['lat_sec'].values
         m_eng = self.models['Energy per Inference (mJ)'].values
         m_acc = self.models['acc_decimal'].values
 
-        results_best_model = []
-        results_acc_inf = []
-        results_raw_inf = [] 
-        results_status = [] 
-        
-        # Track previous model for hysteresis costs
-        prev_model_idx = -1 
-
+        # SEQUENTIAL LOOP
         for idx, row in self.df.iterrows():
-            limit_t = row['budget_time_s']
-            limit_e = row['budget_energy_mj']
-            req_inf = row['n_inferences_req']
             
-            # Skip Blind frames immediately
-            if req_inf <= 0:
-                results_best_model.append("Blind")
-                results_acc_inf.append(0)
-                results_raw_inf.append(0)
-                results_status.append("Blind")
-                prev_model_idx = -1
-                continue
-
+            # Step Inputs
+            harvest = row['energy_harvested_j']
+            baseload = row['energy_baseload_j']
+            dwell = row['dwell_time_s']
+            req = row['n_inferences_req']
+            
             best_score = -1
-            best_raw = 0
             best_idx = -1
             best_status = "Fail"
+            best_consumed_j = baseload # Default if we do nothing
             
-            # Competition: Check every model against the budget
+            # 1. Test All Models against CURRENT Battery State
             for i in range(len(model_names)):
                 
-                # Apply Switching Penalty if we changed models
-                # We deduct the cost from the available budget *before* evaluation
-                curr_limit_t = limit_t
-                curr_limit_e = limit_e
-                
+                # Check Hysteresis
+                sw_j = 0
+                sw_s = 0
                 if prev_model_idx != -1 and i != prev_model_idx:
-                    curr_limit_t -= self.config['switch_latency_s']
-                    curr_limit_e -= self.config['switch_energy_mj']
-                
+                    sw_j = self.config['switch_energy_mj'] / 1000.0
+                    sw_s = self.config['switch_latency_s']
+
                 # Evaluate
-                score, raw, status = self._evaluate_model_at_step(
-                    curr_limit_t, curr_limit_e, req_inf, 
-                    m_lat[i], m_eng[i], m_acc[i]
+                score, raw, cons_j, status = self._evaluate_step_sequential(
+                    curr_battery_j, harvest, baseload, dwell, req,
+                    m_lat[i], m_eng[i], m_acc[i], sw_j, sw_s
                 )
                 
-                # Selection: Pure Score Optimization
-                # We pick the model that yields the most correct answers, period.
-                # (Even if it didn't finish the whole frame)
+                # Logic: Maximize Score
                 if score > best_score:
                     best_score = score
-                    best_raw = raw
                     best_idx = i
                     best_status = status
+                    best_consumed_j = cons_j
             
-            # Record the winner
+            # 2. Execute Champion
             if best_idx != -1:
-                results_best_model.append(model_names[best_idx])
+                res_model.append(model_names[best_idx])
                 prev_model_idx = best_idx
             else:
-                results_best_model.append("None")
-                prev_model_idx = -1
-                
-            results_acc_inf.append(best_score)
-            results_raw_inf.append(best_raw)
-            results_status.append(best_status)
+                res_model.append("None") # Should imply Blind or Dead
+                # If we selected nothing, we still pay baseload
+                best_consumed_j = baseload
+            
+            res_acc.append(best_score)
+            res_status.append(best_status)
+            
+            # 3. Update Battery State
+            # New = Old + In - Out
+            # Clamp between 0 and Max Capacity
+            curr_battery_j = np.clip(curr_battery_j + harvest - best_consumed_j, 
+                                     0, self.BATTERY_CAPACITY_J)
+            
+            res_battery.append(curr_battery_j)
 
-        self.df['selected_model'] = results_best_model
-        self.df['dynamic_inferences'] = results_acc_inf
-        self.df['raw_inferences'] = results_raw_inf
-        self.df['status'] = results_status
+        # Store to DF
+        self.df['dynamic_model'] = res_model
+        self.df['dynamic_acc_inf'] = res_acc
+        self.df['dynamic_status'] = res_status
+        self.df['dynamic_battery_j'] = res_battery
+        
         return self.df
 
-    def run_baseline_comparison(self):
-        print("--- Running Baseline Comparison ---")
+    def run_baseline_sequential(self, strategy_name, model_idx):
+        """
+        Runs the full orbit sequentially for a SINGLE static model.
+        Crucial: This lets us see if the static model kills the battery.
+        """
+        curr_battery_j = self.BATTERY_CAPACITY_J * self.config['initial_charge_pct']
+        total_acc_inf = 0
+        battery_trace = []
         
-        # Identify Baseline Indices
-        idx_worst = self.models['Correct_Inf_per_Joule'].idxmin()
-        idx_fastest_raw = self.models['lat_sec'].idxmin()
-        idx_throughput = self.models['Correct_Inf_per_Sec'].idxmax()
-        idx_efficiency = self.models['Correct_Inf_per_Joule'].idxmax()
+        lat = self.models.at[model_idx, 'lat_sec']
+        eng = self.models.at[model_idx, 'Energy per Inference (mJ)']
+        acc = self.models.at[model_idx, 'acc_decimal']
         
-        baselines = {
-            "Static Worst": idx_worst,
-            "Static Fastest (Raw)": idx_fastest_raw,
-            "Static Best Throughput": idx_throughput,
-            "Static Best Efficiency": idx_efficiency
-        }
-        # TODO: Print all these baseline model names
-        
-        results = {}
-        for name, idx in baselines.items():
-            total_inf = 0
-            lat = self.models.at[idx, 'lat_sec']
-            eng = self.models.at[idx, 'Energy per Inference (mJ)']
-            acc = self.models.at[idx, 'acc_decimal']
+        for _, row in self.df.iterrows():
+            score, _, cons_j, status = self._evaluate_step_sequential(
+                curr_battery_j, 
+                row['energy_harvested_j'], 
+                row['energy_baseload_j'], 
+                row['dwell_time_s'], 
+                row['n_inferences_req'],
+                lat, eng, acc, 
+                0, 0 # No switching costs for static
+            )
             
-            # Run simulation without switching costs (static = no switching)
-            for _, row in self.df.iterrows():
-                inf, _, _ = self._evaluate_model_at_step(
-                    row['budget_time_s'], 
-                    row['budget_energy_mj'], 
-                    row['n_inferences_req'],
-                    lat, eng, acc
-                )
-                total_inf += inf
-            results[name] = total_inf
+            total_acc_inf += score
             
-        return results
+            # Update Battery
+            curr_battery_j = np.clip(curr_battery_j + row['energy_harvested_j'] - cons_j, 
+                                     0, self.BATTERY_CAPACITY_J)
+            battery_trace.append(curr_battery_j)
+            
+        return total_acc_inf, battery_trace
 
     # ==========================================
-    # 3. REPORTING & PLOTS
+    # 3. REPORTING
     # ==========================================
 
     def generate_report(self):
         print("\n" + "="*80)
-        print(f"{'SYSTEM PERFORMANCE REPORT':^80}")
+        print(f"{'SEQUENTIAL BATTERY SIMULATION REPORT':^80}")
         print("="*80)
 
-        # --- ORBIT STATS ---
+        # 1. Physics Stats
         print(f"\n{' ORBIT STATISTICS ':~^80}")
-        px_stats = self.df['px_per_patch'].describe()
-        print(f"\n{'> Pixel Density (Pixels per Patch)':<40}")
-        print(f"  Max: {px_stats['max']:>10.2f} px")
-        print(f"  Min: {px_stats['min']:>10.2f} px")
-        print(f"  Avg: {px_stats['mean']:>10.2f} px")
-
-        idx_max_time = self.df['budget_time_s'].idxmax()
-        idx_min_time = self.df['budget_time_s'].idxmin()
-
-        print(f"\n{'> Frame Workloads':<40}")
-        print(f"  Longest Dwell: {self.df.at[idx_max_time, 'budget_time_s']:>10.2f} s")
-        print(f"     -> Load: {self.df.at[idx_max_time, 'n_inferences_req']:>10.0f} tiles")
-        print(f"  Shortest Dwell: {self.df.at[idx_min_time, 'budget_time_s']:>10.2f} s")
-        print(f"     -> Load: {self.df.at[idx_min_time, 'n_inferences_req']:>10.0f} tiles")
-
-        # --- PERFORMANCE ---
+        print(f"Battery Capacity: {self.config['battery_capacity_wh']} Wh ({self.BATTERY_CAPACITY_J:,.0f} Joules)")
+        print(f"Solar Generation: {self.config['solar_generation_mw']} mW")
+        print(f"System Baseload:  {self.config['system_baseload_mw']} mW")
+        
+        # 2. Dynamic Results
+        dyn_total = self.df['dynamic_acc_inf'].sum()
+        
+        # 3. Run Baselines
+        baselines = {}
+        # Identify Models
+        idx_worst = self.models['Correct_Inf_per_Joule'].idxmin()
+        idx_throughput = self.models['Correct_Inf_per_Sec'].idxmax()
+        idx_efficiency = self.models['Correct_Inf_per_Joule'].idxmax()
+        
+        bl_configs = {
+            "Static Worst": idx_worst,
+            "Static Best Throughput": idx_throughput,
+            "Static Best Efficiency": idx_efficiency
+        }
+        
+        bl_traces = {} # Store battery traces for plotting
+        
         print(f"\n{' PERFORMANCE COMPARISON ':~^80}")
-        dyn_total = self.df['dynamic_inferences'].sum()
-        baselines = self.run_baseline_comparison()
-        
-        print(f"\n{'Strategy':<35} | {'Total Acc. Inferences':<25} | {'Improvement'}")
+        print(f"\n{'Strategy':<35} | {'Total Acc. Inferences':<25} | {'Battery Died?'}")
         print("-" * 75)
         
-        best_static_score = max(baselines.values())
-        for name, score in baselines.items():
-            print(f"{name:<35} | {score:,.0f}")
+        best_static = 0
+        
+        for name, idx in bl_configs.items():
+            score, trace = self.run_baseline_sequential(name, idx)
+            baselines[name] = score
+            bl_traces[name] = trace
+            
+            # Check if battery hit 0
+            died = "YES" if min(trace) <= 1.0 else "No"
+            print(f"{name:<35} | {score:,.0f}{'':<10} | {died}")
+            if score > best_static: best_static = score
+            
         print("-" * 75)
         
-        imp_pct = ((dyn_total - best_static_score) / best_static_score) * 100 if best_static_score > 0 else 0.0
-        print(f"{'Dynamic Switching (Ours)':<35} | {dyn_total:,.0f}{'':<14} | +{imp_pct:.2f}%")
+        # Dynamic Result
+        died_dyn = "YES" if self.df['dynamic_battery_j'].min() <= 1.0 else "No"
+        imp = ((dyn_total - best_static)/best_static)*100 if best_static > 0 else 0
+        print(f"{'Dynamic Switching (Ours)':<35} | {dyn_total:,.0f}{'':<10} | {died_dyn} (+{imp:.1f}%)")
+        print("="*80)
         
-        # --- USAGE ---
-        print(f"\n{' DYNAMIC MODEL BREAKDOWN ':~^80}")
-        used_df = self.df[self.df['status'].isin(['Success', 'Partial'])].copy()
-        
-        if used_df.empty:
-            print("No inferences performed.")
-        else:
-            stats = used_df.groupby('selected_model').agg(
-                raw_count=('raw_inferences', 'sum'),
-            ).reset_index()
+        self.plot_results(bl_traces)
 
-            stats = stats.merge(self.models[['Model name', 'Energy per Inference (mJ)']], 
-                                left_on='selected_model', right_on='Model name', how='left')
-            
-            stats['total_energy_j'] = (stats['raw_count'] * stats['Energy per Inference (mJ)']) / 1000.0
-            total_raw = stats['raw_count'].sum()
-            stats['pct_usage'] = (stats['raw_count'] / total_raw) * 100
-            
-            print(f"\n{'Model Name':<30} | {'% of Infs':<10} | {'Count (Raw)':<12} | {'Energy (J)':<12}")
-            print("-" * 75)
-            for _, row in stats.iterrows():
-                print(f"{row['selected_model']:<30} | {row['pct_usage']:>9.1f}% | {int(row['raw_count']):>12,} | {row['total_energy_j']:>12.2f}")
-            print("-" * 75)
-
-        self.plot_results()
-
-    def plot_results(self):
+    def plot_results(self, baseline_traces):
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12), sharex=True)
         x = self.df['True Anomaly (deg)']
         
-        # Workload
-        ax1.plot(x, self.df['n_inferences_req'], color='blue', label='Required Inferences')
-        ax1.set_yscale('log')
-        ax1.set_ylabel('Inferences Required (Log Scale)')
-        ax1_twin = ax1.twinx()
-        ax1_twin.plot(x, self.df['budget_energy_mj'], color='orange', linestyle='--', label='Energy Budget')
-        ax1_twin.set_ylabel('Energy Budget (mJ)', color='orange')
+        # Plot 1: Battery State of Charge
+        # Plot Dynamic
+        ax1.plot(x, self.df['dynamic_battery_j'] / 3600.0, 'g-', linewidth=2, label='Dynamic (Ours)')
         
-        # Performance
-        unique_models = [m for m in self.df['selected_model'].unique() if m not in ["None", "Blind"]]
+        # Plot Baselines
+        for name, trace in baseline_traces.items():
+            trace_wh = np.array(trace) / 3600.0
+            style = '--'
+            if "Worst" in name: color = 'red'
+            elif "Throughput" in name: color = 'orange'
+            else: color = 'blue'
+            ax1.plot(x, trace_wh, linestyle=style, color=color, alpha=0.7, label=name)
+            
+        ax1.set_ylabel('Battery State (Wh)')
+        ax1.set_title(f'Power Management: Battery State over Orbit (Cap: {self.config["battery_capacity_wh"]} Wh)')
+        ax1.axhline(y=0, color='k', linewidth=1)
+        ax1.grid(True, alpha=0.3)
+        ax1.legend(loc='lower left')
+        
+        # Eclipse Shading
+        ax1.axvspan(180, 360, color='gray', alpha=0.1, label='Eclipse')
+        
+        # Plot 2: Inference Performance
+        # Same scatter plot as before for Dynamic
+        unique_models = [m for m in self.df['dynamic_model'].unique() if m not in ["None", "Blind"]]
         if unique_models:
             model_map = {name: i for i, name in enumerate(unique_models)}
-            colors = [model_map.get(m, -1) for m in self.df['selected_model']]
+            colors = [model_map.get(m, -1) for m in self.df['dynamic_model']]
             
-            mask_succ = (self.df['status'] == 'Success')
+            mask_succ = (self.df['dynamic_status'] == 'Success')
             if mask_succ.any():
-                ax2.scatter(x[mask_succ], self.df.loc[mask_succ, 'dynamic_inferences'], 
+                ax2.scatter(x[mask_succ], self.df.loc[mask_succ, 'dynamic_acc_inf'], 
                            c=[colors[i] for i in np.where(mask_succ)[0]], cmap='tab10', marker='o')
             
-            mask_part = (self.df['status'] == 'Partial')
+            mask_part = (self.df['dynamic_status'] == 'Partial')
             if mask_part.any():
-                ax2.scatter(x[mask_part], self.df.loc[mask_part, 'dynamic_inferences'], 
+                ax2.scatter(x[mask_part], self.df.loc[mask_part, 'dynamic_acc_inf'], 
                            c=[colors[i] for i in np.where(mask_part)[0]], cmap='tab10', marker='x')
-
-            from matplotlib.patches import Patch
-            cmap = plt.get_cmap('tab10')
-            legend_elements = [Patch(facecolor=cmap(model_map[m]), label=m) for m in unique_models]
-            ax2.legend(handles=legend_elements, title="Active Model", loc='upper right')
 
         ax2.set_ylabel('Accurate Inferences')
         ax2.set_xlabel('True Anomaly (deg)')
-        ax2.set_title('Dynamic Performance')
-        ax2.axvspan(180, 360, color='gray', alpha=0.1, label='Eclipse')
+        ax2.set_title('Dynamic Inference Performance')
+        ax2.grid(True, alpha=0.3)
+        ax2.axvspan(180, 360, color='gray', alpha=0.1)
         
         plt.tight_layout()
-        plt.savefig(self.output_dir / "final_system_performance.png")
-        print(f"Plot saved to {self.output_dir / 'final_system_performance.png'}")
+        plt.savefig(self.output_dir / "sequential_battery_sim.png")
+        print(f"Plot saved to {self.output_dir / 'sequential_battery_sim.png'}")
 
 if __name__ == "__main__":
-    sim_config = {
-        'target_patch_km': 2.0,     
-        'sun_power_mw': 1000.0,     
-        'eclipse_power_mw': 500.0,  
-        'fov': 2.0,
-        'min_pixels': 10            
-    }
-
     sim = SatelliteInferenceSim(
         orbit_data_path="libs/coral_tpu_characterization/data/stk", 
         model_json_dir="libs/coral_tpu_characterization/data/tpunet_acc", 
         saleae_root="results/captures_1_20", 
-        output_dir="results/final_analysis",
-        config=sim_config
+        output_dir="results/final_analysis"
     )
-    
-    sim.run_optimization()
+    sim.run_dynamic_optimization()
     sim.generate_report()
