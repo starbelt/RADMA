@@ -42,26 +42,7 @@ def analyze_orbit_regimes(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename='g
     best_gsd = df_orbit['gsd_m'].min() # This is our "High Res" benchmark
     print(f"Perigee (Min Alt): {min_alt:.2f} km")
     print(f"Best GSD at Perigee: {best_gsd:.2f} m/px")
-    
-    # If we want to maintain this specific "Best GSD" quality, as we go higher,
-    # our pixels get bigger (worse). To treat them as "constant size", we are essentially
-    # looking for objects that are physically larger as we go up, OR we accept that 
-    # we are looking for the same object but with fewer pixels.
-    
-    # Alternate Interpretation of TODO: Constant Ground Coverage
-    # Let's say a 'Task' is analyzing a 1km x 1km patch.
-    # At Perigee: 1km takes (1000 / best_gsd) pixels.
-    # At Apogee: 1km takes (1000 / current_gsd) pixels.
-    
-    # Let's define two specific tasks for the TPU:
-    # Task A (Low GSD): "Fire Detection" - Needs 10m resolution (Launch/Fire)
-    # Task B (High GSD): "Cloud/Weather" - Needs 100m resolution (General)
-    
-    # Let's calculate the 'Effort' (Tiles/sec) required to scan the *same physical area* # as the perigee pass, but at current altitude.
-    # Actually, usually higher altitude = easier to scan area because FOV is huge.
-    # The bottleneck is usually resolution.
-    
-    # Let's just plot the GSD regime.
+
     
     # --- Plotting ---
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(10, 12))
@@ -89,7 +70,7 @@ def analyze_orbit_regimes(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename='g
     ax3.grid(True, alpha=0.3)
 
     # Throughput (Natural)
-    # This shows the raw data pressure on the TPU just to keep up with the camera
+    # shows the raw data pressure on the TPU just to keep up with the camera
     ax4.plot(x, df_orbit['tiles_per_sec_natural'], 'orange')
     ax4.set_ylabel('Tiles/sec (Full Frame)')
     ax4.set_title(f'Data Pressure (Processing full {sensor_res}x{sensor_res} frame)')
@@ -164,99 +145,119 @@ def ground_track_plots(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename='grou
     plt.tight_layout()
     plt.savefig(filename)
 
-def analyze_constant_ground_size(df, sensor_res=4096, fov=2.0, tpu_dim=224, target_patch_km=1.0, filename='orbit_workload_analysis.png'):
+def analyze_dynamic_regimes(df, sensor_res=4096, fov=2.0, tpu_dim=224, target_patch_km=5.0, filename='orbit_regimes_discrete.png'):
     df.columns = df.columns.str.strip()
     
-    # Data Prep
+    # --- Data Prep ---
     diffs = df['True Anomaly (deg)'].diff()
     reset_indices = df.index[diffs < -300].tolist()
-    df_orbit = df.copy() if not reset_indices else df.loc[:reset_indices[0]-1].copy()
+    if not reset_indices:
+        df_orbit = df.copy()
+    else:
+        df_orbit = df.loc[:reset_indices[0]-1].copy()
 
-    # Physics & Geometry
-    # Velocity (Ground Speed)
+    # --- Physics ---
     df_orbit['v_ground'] = np.sqrt(df_orbit['vx (km/sec)']**2 + df_orbit['vy (km/sec)']**2 + df_orbit['vz (km/sec)']**2)
-    
-    # Swath Width
     half_angle = np.deg2rad(fov / 2)
+    
+    # Geometry
     df_orbit['swath_width_km'] = 2 * df_orbit['Alt (km)'] * np.tan(half_angle)
+    df_orbit['swath_area_km2'] = df_orbit['swath_width_km']**2 # Square view assumption
     
-    # area visible in one frame (assuming square sensor for simplicity)
-    df_orbit['frame_area_km2'] = df_orbit['swath_width_km']**2
+    # 1. Native Resolution Check
+    # How many pixels represent our target 5km patch?
+    # (Sensor Res / Swath Width) * Target Size
+    df_orbit['px_per_target_patch'] = (sensor_res / df_orbit['swath_width_km']) * target_patch_km
+    
+    # --- REGIME LOGIC ---
+    
+    # Regime Oversampling (Low Alt) BIGGER than the TPU input (224px).
+    # We must TILE the patch.
+    # Count = (Pixels / 224)^2
+    
+    # Regime Undersampling (High Alt) SMALLER than the TPU input.
+    # We AGGREGATE patches (fit multiple 5km patches into one 224 input).
+    # Count = (Pixels / 224)^2  <-- This naturally becomes a fraction (< 1.0)
+    
+    # Calculate Inferences per Patch
+    # If this is 4.0, we need 4 inferences to cover patch area.
+    # If this is 0.25, one inference covers four patch areas.
+    df_orbit['infs_per_patch'] = (df_orbit['px_per_target_patch'] / tpu_dim)**2
+    
+    # Clamp extreme upscaling
+    # If px_per_target_patch < 10 pixels, maybe we just can't detect anything
+    # Let's set a "Blindness Threshold" where resolution is too poor to be useful.
+    MIN_RESOLVABLE_PIXELS = 24 # If a 5km patch is < 10px, we treat it as zero load (useless data) # TODO: Make this a parameter
+    df_orbit['infs_per_patch'] = np.where(df_orbit['px_per_target_patch'] < MIN_RESOLVABLE_PIXELS, 0, df_orbit['infs_per_patch'])
 
-    # Regime: Constant Feature Size 
     
-    # How many tiles fit in the current view?
-    # (Area of View) / (Area of Target Patch)
-    df_orbit['tiles_per_frame_fixed_ground'] = df_orbit['frame_area_km2'] / (target_patch_km**2)
+    # Total patches visible in the frame
+    df_orbit['patches_in_view'] = df_orbit['swath_area_km2'] / (target_patch_km**2)
     
-    # How much time do we have before the satellite moves one swath height
-    # t = Distance / Speed
+    # Total Inferences for the whole frame = (Patches in View) * (Infs per Patch)
+    # In the aggregation regime, 'Patches in view' goes UP, but 'Infs per patch' goes DOWN faster.
+    df_orbit['total_infs_per_frame'] = df_orbit['patches_in_view'] * df_orbit['infs_per_patch']
+    
+    # Time available (Dwell time)
     df_orbit['t_dwell'] = df_orbit['swath_width_km'] / df_orbit['v_ground']
     
-    # tiles per second required to cover the ground
-    df_orbit['tpu_load_fixed_ground'] = df_orbit['tiles_per_frame_fixed_ground'] / df_orbit['t_dwell']
-    
-    # check resolution limit
-    # At high altitude, a 1km patch might only be 2 pixels wide!
-    # Let's calculate "Pixels per Target Patch" to see if the TPU input is valid.
-    # Pixels per km = Sensor Res / Swath Width
-    df_orbit['px_per_patch'] = (sensor_res / df_orbit['swath_width_km']) * target_patch_km
-    
-    # If px_per_patch < tpu_dim (224), we are upscaling (bad?). 
-    # If px_per_patch > tpu_dim, we are downscaling (good).
+    # Final Throughput Requirement
+    df_orbit['infs_per_sec'] = df_orbit['total_infs_per_frame'] / df_orbit['t_dwell']
 
-    # plotting
-    fig, axes = plt.subplots(4, 1, figsize=(12, 14), sharex=True)
+
+    #  plotting
+    fig, axes = plt.subplots(4, 1, figsize=(10, 14), sharex=True)
     x = df_orbit['True Anomaly (deg)']
 
-    # alt and speed
+    # Pixel Density
     ax1 = axes[0]
-    ax1.plot(x, df_orbit['Alt (km)'], 'g', label='Altitude')
-    ax1_twin = ax1.twinx()
-    ax1_twin.plot(x, df_orbit['v_ground'], 'b--', label='Ground Speed')
-    ax1.set_ylabel('Altitude (km)', color='g')
-    ax1_twin.set_ylabel('Speed (km/s)', color='b')
-    ax1.set_title('Orbital Dynamics')
+    
+    ax1.plot(x, df_orbit['px_per_target_patch'], 'k', label='Pixels per 5km Patch')
+    ax1.axhline(y=tpu_dim, color='r', linestyle='--', label=f'TPU Input ({tpu_dim}px)')
+    ax1.axhline(y=MIN_RESOLVABLE_PIXELS, color='gray', linestyle=':', label='Blindness Limit')
+    ax1.set_yscale('log')
+    ax1.set_ylabel('Pixels per Patch')
+    ax1.set_title('Regime Detection: Resolution vs TPU Input')
+    ax1.legend()
     ax1.grid(True, alpha=0.3)
+    
+    # Add colored bands for regimes
+    # Where Px > 224: Tiling Regime (Green)
+    # Where Px < 224: Aggregation Regime (Blue)
+    # TODO: Add legend entries for these areas
+    ax1.fill_between(x, MIN_RESOLVABLE_PIXELS, df_orbit['px_per_target_patch'], 
+                     where=(df_orbit['px_per_target_patch'] >= tpu_dim), 
+                     color='green', alpha=0.1, label='Tiling Regime')
+    ax1.fill_between(x, MIN_RESOLVABLE_PIXELS, df_orbit['px_per_target_patch'], 
+                     where=(df_orbit['px_per_target_patch'] < tpu_dim), 
+                     color='blue', alpha=0.1, label='Aggregation Regime')
 
-    # swath width
+    # Inferences per Patch (The "Efficiency" Metric)
     ax2 = axes[1]
-    ax2.plot(x, df_orbit['swath_width_km'], 'purple')
-    ax2.set_ylabel('Swath Width (km)')
-    ax2.set_title(f'Field of View Width (FOV: {fov} deg)')
+    ax2.plot(x, df_orbit['infs_per_patch'], 'purple')
+    ax2.set_ylabel('Inferences per Patch')
+    ax2.set_yscale('log')
+    ax2.set_title('Compute Density: Inferences required per ground unit')
+    ax2.axhline(y=1.0, color='k', linestyle='--', label='1:1 Ratio')
     ax2.grid(True, alpha=0.3)
 
-    # TPU Workload 
+    # Total Load
     ax3 = axes[2]
-    ax3.plot(x, df_orbit['tpu_load_fixed_ground'], 'r', linewidth=2)
-    ax3.set_ylabel('Inferences / Sec')
-    ax3.set_title(f'TPU Workload: Processing {target_patch_km}km² Tiles (Constant Ground Size)')
+    ax3.plot(x, df_orbit['infs_per_sec'], 'r', linewidth=2)
+    ax3.set_ylabel('Total Inferences / Sec')
+    ax3.set_title('Final TPU Throughput Requirement')
     ax3.grid(True, alpha=0.3)
-    
-    # Data Quality 
-    ax4 = axes[3]
-    ax4.plot(x, df_orbit['px_per_patch'], 'k')
-    ax4.axhline(y=tpu_dim, color='red', linestyle='--', label=f'Native TPU Input ({tpu_dim}px)')
-    ax4.set_ylabel('Pixels per Patch')
-    ax4.set_yscale('log') # Log scale because this varies wildly
-    ax4.set_title('Resolution Quality (Log Scale)')
-    ax4.legend()
-    ax4.grid(True, alpha=0.3)
-    ax4.set_xlabel('True Anomaly (deg)')
 
-    # Add regime labels
-    for ax in axes:
-        ax.axvline(x=0, color='gray', linestyle=':', alpha=0.5)
-        ax.axvline(x=180, color='gray', linestyle=':', alpha=0.5)
+    # Swath/Alt Reference
+    ax4 = axes[3]
+    ax4.plot(x, df_orbit['Alt (km)'], 'g')
+    ax4.set_ylabel('Altitude (km)')
+    ax4.set_xlabel('True Anomaly (deg)')
+    ax4.grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.savefig(filename)
-    print(f"Analysis saved to {filename}")
-    
-    # Stats
-    peak_load = df_orbit['tpu_load_fixed_ground'].max()
-    min_load = df_orbit['tpu_load_fixed_ground'].min()
-    print(f"TPU Load Range: {min_load:.1f} to {peak_load:.1f} inferences/sec")
+    print(f"Saved discrete regime analysis to {filename}")
 
 if __name__ == "__main__":
     root = get_repo_root() / "data/stk"
@@ -272,8 +273,13 @@ if __name__ == "__main__":
     Sensor_FOV = 2.0 # deg
     Model_Input_dim = 224 # px tile size
 
-    ground_track_plots(df, filename = str(plotdir / "ground_track.png"))
+    # ground_track_plots(df, filename = str(plotdir / "ground_track.png"))
     
-    analyze_orbit_regimes(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename=str(plotdir /'ground_track_regimes_stk.png'))
+    # analyze_orbit_regimes(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename=str(plotdir /'ground_track_regimes_stk.png'))
 
-    analyze_constant_ground_size(df,target_patch_km=5.0, filename=str(plotdir / "orbit_workload_constant_ground.png"))
+    analyze_dynamic_regimes(df, 
+                            sensor_res=4096, 
+                            fov=2.0, 
+                            tpu_dim=224, 
+                            target_patch_km=10.0, # 5km patches
+                            filename=str(plotdir / "orbit_regimes_discrete.png"))
