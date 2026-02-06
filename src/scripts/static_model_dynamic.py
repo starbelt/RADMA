@@ -3,22 +3,24 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-# --- NEW IMPORT ---
 from model_data_manager import ModelDataManager 
 
 class SatelliteInferenceSim:
     DEFAULT_CONFIG = {
         'fov': 2.0,                # Sensor FOV (deg)
-        'target_patch_km': 2.0,    # Ground feature size
+        'target_patch_km': 10.0,    # Ground feature size
         'tpu_dim': 224,            # TPU Input size
         'sensor_res': 4096,        # Camera Res
-        'min_pixels': 20,          # Blindness threshold
+        'min_pixels': 10,          # Blindness threshold
+
         
-        # Power / Battery
-        'battery_capacity_wh': 2.0,    # ~7200 Joules
-        'solar_generation_mw': 600.0,  # Small deployable or good body angle
-        'system_baseload_mw': 300.0,   # Highly optimized microcontroller idle
+        'battery_capacity_wh': 1.1,    # ~300mAh 1S Lipo (Pouch cell)
+        'solar_generation_mw': 200.0,  # ~1P Body Mounted Panel
+        'system_baseload_mw': 80.0,    # MCU Idle + Radio RX (No TPU)
         'initial_charge_pct': 1.0,
+
+        'min_safe_battery_pct': 0.05,
+        'naive_restart_threshold': 0.65, # Must charge to 65% before restarting inference
         
         # Switching
         'switch_latency_s': 0.0, 
@@ -53,6 +55,7 @@ class SatelliteInferenceSim:
         acc_col = "Top-1 Accuracy (measured)" if "Top-1 Accuracy (measured)" in df.columns else "Top-1 Accuracy"
         
         df['acc_decimal'] = df[acc_col] / 100.0
+        df['lat_sec'] = df['Measured Inference Time (ms)'] / 1000.0
         
         print(f"Successfully loaded {len(df)} models.")
         return df
@@ -97,7 +100,7 @@ class SatelliteInferenceSim:
         res = self.config['sensor_res']
         tpu_dim = self.config['tpu_dim']
         
-        # "Smart" Workload calculation (accounts for blindness)
+        # "Smart" Workload
         df['px_per_patch'] = (res / df['swath_km']) * target_km
         df['infs_per_patch'] = np.where(df['px_per_patch'] < self.config['min_pixels'], 
                                         0.0, 
@@ -111,7 +114,6 @@ class SatelliteInferenceSim:
             df['solar_factor'] = df['Solar Intensity'].fillna(1.0)
             df['is_eclipse'] = df['solar_factor'] < 0.1
         else:
-            print("[INFO] No Solar Intensity data found. Assuming 100% Sunlight (HEO).")
             df['solar_factor'] = 1.0
             df['is_eclipse'] = False
 
@@ -165,6 +167,7 @@ class SatelliteInferenceSim:
             best_status, best_consumed_j = "Fail", baseload 
             
             for i in range(len(model_names)):
+                # Go through each potential model, evaluate the best one for the next step
                 sw_j = (self.config['switch_energy_mj'] / 1000.0) if (prev_model_idx != -1 and i != prev_model_idx) else 0
                 sw_s = self.config['switch_latency_s'] if (prev_model_idx != -1 and i != prev_model_idx) else 0
 
@@ -176,6 +179,15 @@ class SatelliteInferenceSim:
                 if score > best_score:
                     best_score, best_raw, best_idx = score, raw, i
                     best_status, best_consumed_j = status, cons_j
+                
+                if curr_battery_j < (self.BATTERY_CAPACITY_J * self.config['min_safe_battery_pct']): #margin
+                    # Recharge behavior
+                    # Don't run any models, just baseload
+                    best_score = 0
+                    best_raw = 0
+                    best_idx = -1
+                    best_status = "Recharging"
+                    best_consumed_j = baseload
             
             if best_idx != -1:
                 res_model.append(model_names[best_idx])
@@ -202,6 +214,10 @@ class SatelliteInferenceSim:
 
     def run_baseline_sequential(self, strategy_name, model_idx):
         curr_battery_j = self.BATTERY_CAPACITY_J * self.config['initial_charge_pct']
+        
+        restart_threshold_j = self.BATTERY_CAPACITY_J * self.config['naive_restart_threshold']
+        cutoff_j = self.BATTERY_CAPACITY_J * self.config['min_safe_battery_pct']
+        
         total_acc_inf = 0
         battery_trace = []
         
@@ -209,73 +225,143 @@ class SatelliteInferenceSim:
         eng = self.models.at[model_idx, 'Energy per Inference (mJ)']
         acc = self.models.at[model_idx, 'acc_decimal']
         
-        for _, row in self.df.iterrows():
-            score, _, cons_j, _ = self._evaluate_step_sequential(
-                curr_battery_j, row['energy_harvested_j'], row['energy_baseload_j'], row['dwell_time_s'], row['n_inferences_req'],
-                lat, eng, acc, 0, 0 
-            )
-            total_acc_inf += score
-            curr_battery_j = np.clip(curr_battery_j + row['energy_harvested_j'] - cons_j, 0, self.BATTERY_CAPACITY_J)
-            battery_trace.append(curr_battery_j)
-            
-        return total_acc_inf, battery_trace
-
-    # --- NEW NAIVE BASELINE ---
-    def run_naive_baseline(self, model_idx):
-        """
-        Naive = Tiling the full sensor frame regardless of altitude/blindness.
-        """
-        curr_battery_j = self.BATTERY_CAPACITY_J * self.config['initial_charge_pct']
-        total_acc_inf = 0
-        battery_trace = []
-        
-        lat = self.models.at[model_idx, 'lat_sec']
-        eng = self.models.at[model_idx, 'Energy per Inference (mJ)']
-        acc = self.models.at[model_idx, 'acc_decimal']
-        
-        # Constant Naive Workload: (Sensor / TPU)^2
-        # e.g., (4096 / 224)^2 = ~334 tiles
-        tiles_naive = (self.config['sensor_res'] / self.config['tpu_dim'])**2
+        dead_steps = 0
+        blind_steps = 0
+        is_recovering = False
         
         for _, row in self.df.iterrows():
-            # Naive Demand is ALWAYS tiles_naive
-            # But "Accurate Inferences" are only possible if we aren't legally blind
-            is_actually_blind = row['n_inferences_req'] == 0
+            harvest = row['energy_harvested_j']
+            baseload = row['energy_baseload_j']
+            dwell = row['dwell_time_s']
+            req_inf = row['n_inferences_req']
             
-            # Use the sequential stepper to calculate energy consumption
-            # We pass tiles_naive as the requirement
-            _, actual_runs, cons_j, status = self._evaluate_step_sequential(
-                curr_battery_j, row['energy_harvested_j'], row['energy_baseload_j'], row['dwell_time_s'], 
-                tiles_naive, # FORCE NAIVE DEMAND
-                lat, eng, acc, 0, 0 
-            )
-            
-            # Logic: We burned the power to do 'actual_runs'. 
-            # If we were blind, those runs yielded 0 value.
-            # If we weren't blind, they yielded 'actual_runs * acc' value.
-            if is_actually_blind:
-                step_score = 0
-            else:
-                step_score = actual_runs * acc
+            # recovery period
+            if is_recovering:
+                # Operationally dead while recovering
+                dead_steps += 1 
+                if req_inf > 0: blind_steps += 1
                 
-            total_acc_inf += step_score
-            curr_battery_j = np.clip(curr_battery_j + row['energy_harvested_j'] - cons_j, 0, self.BATTERY_CAPACITY_J)
+                # consume baseload power
+                cons_j = baseload
+                
+                # update battery
+                potential_batt = curr_battery_j + harvest - cons_j
+                
+                # check in on wakeup condition
+                if potential_batt >= restart_threshold_j:
+                    is_recovering = False
+                
+                # check low bound
+                curr_battery_j = np.clip(potential_batt, 0, self.BATTERY_CAPACITY_J)
+                battery_trace.append(curr_battery_j)
+                continue 
+
+            # Active Period
+            score, _, cons_j, status = self._evaluate_step_sequential(
+                curr_battery_j, harvest, baseload, dwell, req_inf,
+                lat, eng, acc, 0, 0 
+            )
+            
+            # Update Battery
+            curr_battery_j = np.clip(curr_battery_j + harvest - cons_j, 0, self.BATTERY_CAPACITY_J)
+            
+            # if it died or dipped below the safety cutoff, force recovery.
+            # This prevents the model from riding the 0% line forever.
+            if status == "DeadBattery" or curr_battery_j < cutoff_j:
+                is_recovering = True
+                # If we actually crashed (DeadBattery), ensure battery is 0
+                if status == "DeadBattery": curr_battery_j = 0
+                
+                # Don't count score for this step if we crashed/died mid-step?
+                # actually, we get the data before the crash, so we keep the score, we'll be generous and say we're really quick at writing to storage lol .
+            
+            if status == "Blind": blind_steps += 1
+            
+            total_acc_inf += score
             battery_trace.append(curr_battery_j)
             
-        return total_acc_inf, battery_trace
+        return total_acc_inf, battery_trace, dead_steps, blind_steps
+
+    def run_naive_baseline(self, model_idx):
+        curr_battery_j = self.BATTERY_CAPACITY_J * self.config['initial_charge_pct']
+        restart_threshold_j = self.BATTERY_CAPACITY_J * self.config['naive_restart_threshold']
+        
+        total_acc_inf = 0
+        battery_trace = []
+        
+        lat = self.models.at[model_idx, 'lat_sec']
+        eng = self.models.at[model_idx, 'Energy per Inference (mJ)']
+        acc = self.models.at[model_idx, 'acc_decimal']
+        
+        dead_steps = 0
+        blind_steps = 0
+        is_recovering = False
+        
+        for _, row in self.df.iterrows():
+            harvest = row['energy_harvested_j']
+            baseload = row['energy_baseload_j']
+            dwell = row['dwell_time_s']
+            real_demand = row['n_inferences_req']
+            
+            if is_recovering:
+                dead_steps += 1 # offline while recovering
+                if real_demand > 0: blind_steps += 1
+                
+                cons_j = baseload
+                potential_batt = curr_battery_j + harvest - cons_j
+                
+                if potential_batt >= restart_threshold_j:
+                    is_recovering = False
+                
+                curr_battery_j = np.clip(potential_batt, 0, self.BATTERY_CAPACITY_J)
+                battery_trace.append(curr_battery_j)
+                continue
+
+            # Naive demands MAXIMUM possible throughput, no knowledge of demand/ ground frame deadlines!
+            runs_wanted = np.floor(dwell / lat)
+            energy_needed_j = baseload + (runs_wanted * (eng / 1000.0))
+            
+            available_j = curr_battery_j + harvest
+            
+            if energy_needed_j > available_j:
+                # CRASH
+                curr_battery_j = 0 
+                is_recovering = True 
+                dead_steps += 1 # count the crash step as dead too? This is so marginal whatever
+                actual_runs_for_score = 0 
+            else:
+                # SUCCESS
+                curr_battery_j = available_j - energy_needed_j
+                actual_runs_for_score = min(runs_wanted, real_demand)
+            
+            if real_demand == 0: blind_steps += 1
+            total_acc_inf += (actual_runs_for_score * acc)
+            battery_trace.append(curr_battery_j)
+            
+        return total_acc_inf, battery_trace, dead_steps, blind_steps
 
     def generate_report(self):
-        print("\n" + "="*95)
-        print(f"{'SEQUENTIAL BATTERY SIMULATION REPORT':^95}")
-        print("="*95)
+        print("\n" + "="*100)
+        print(f"{'SEQUENTIAL BATTERY SIMULATION REPORT':^100}")
+        print("="*100)
 
-        # Baseline definitions
+        # Identify Models
         idx_worst = self.models['Correct_Inf_per_Joule'].idxmin()
         idx_throughput = self.models['Correct_Inf_per_Sec'].idxmax()
         idx_efficiency = self.models['Correct_Inf_per_Joule'].idxmax()
         
+        name_worst = self.models.at[idx_worst, 'Model name']
+        name_fast = self.models.at[idx_throughput, 'Model name']
+        name_eff = self.models.at[idx_efficiency, 'Model name']
+
+        print(f"\n> Model Selection for Baselines:")
+        print(f"  Worst Efficiency:   {name_worst}")
+        print(f"  Best Throughput:    {name_fast}")
+        print(f"  Best Efficiency:    {name_eff}")
+
+        # run baselines
         bl_configs = {
-            "Naive (Worst Model)": (idx_worst, True),   # (Index, IsNaive)
+            "Naive (Worst)": (idx_worst, True),
             "Static Worst (Smart)": (idx_worst, False),
             "Static Throughput (Smart)": (idx_throughput, False),
             "Static Efficiency (Smart)": (idx_efficiency, False)
@@ -284,34 +370,79 @@ class SatelliteInferenceSim:
         bl_results = {}
         bl_traces = {}
         
-        print(f"\n{'~'*33} PERFORMANCE COMPARISON {'~'*34}")
-        print(f"\n{'Strategy':<35} | {'Total Acc. Inferences':<25} | {'Improvement'}")
-        print("-" * 80)
+        print(f"\n{'~'*38} PERFORMANCE COMPARISON {'~'*38}")
+        print(f"{'Strategy':<26} | {'Total Acc. Inf':<14} | {'% Dead':<7} | {'% Blind':<7} | {'Improvement'}")
+        print("-" * 100)
         
         score_worst_naive = 0
         score_best_static = 0
+        total_steps = len(self.df)
         
         for name, (idx, is_naive) in bl_configs.items():
             if is_naive:
-                score, trace = self.run_naive_baseline(idx)
-                if name == "Naive (Worst Model)": score_worst_naive = score
+                score, trace, dead, blind = self.run_naive_baseline(idx)
+                if name == "Naive (Worst)": score_worst_naive = score
             else:
-                score, trace = self.run_baseline_sequential(name, idx)
+                score, trace, dead, blind = self.run_baseline_sequential(name, idx)
                 if score > score_best_static: score_best_static = score
 
             bl_results[name] = score
             bl_traces[name] = trace
-            print(f"{name:<35} | {score:,.0f}")
             
-        print("-" * 80)
-        
+            pct_dead = (dead / total_steps) * 100
+            pct_blind = (blind / total_steps) * 100
+            
+            print(f"{name:<26} | {score:,.0f}".ljust(43) + 
+                  f" | {pct_dead:>5.1f}% | {pct_blind:>5.1f}% | ", end="")
+            print("") 
+
+        # dynamic Results
         dyn_total = self.df['dynamic_acc_inf'].sum()
+        dyn_dead = (self.df['dynamic_status'] == 'DeadBattery').sum()
+        dyn_blind = (self.df['dynamic_status'] == 'Blind').sum()
+        
+        pct_dyn_dead = (dyn_dead / total_steps) * 100
+        pct_dyn_blind = (dyn_blind / total_steps) * 100
+
+        print("-" * 100)
         gain_vs_best = ((dyn_total - score_best_static) / score_best_static * 100) if score_best_static > 0 else 0
         gain_vs_naive = ((dyn_total - score_worst_naive) / score_worst_naive * 100) if score_worst_naive > 0 else 0
         
-        print(f"{'Dynamic Switching (Ours)':<35} | {dyn_total:,.0f}{'':<14} | +{gain_vs_best:.2f}% (vs Best Static)")
-        print(f"{'':<35} | {'':<25} | +{gain_vs_naive:.2f}% (vs Naive)")
-        print("="*95)
+        print(f"{'Dynamic Switching (Ours)':<26} | {dyn_total:,.0f}".ljust(43) + 
+              f" | {pct_dyn_dead:>5.1f}% | {pct_dyn_blind:>5.1f}% | +{gain_vs_best:.1f}% (vs Best Static)")
+        print(f"{'':<43}             |        |        | +{gain_vs_naive:.1f}% (vs Naive)")
+        print("="*100)
+        
+        # utilization breakdown
+        print(f"\n{'~'*36} DYNAMIC UTILIZATION DETAILS {'~'*37}")
+        print(f"{'Model Name':<28} | {'% Time':<7} | {'% Infs':<7} | {'Total Infs':<11} | {'Energy (J)':<11}")
+        print("-" * 100)
+        
+        valid_df = self.df[~self.df['dynamic_model'].isin(['None', 'Blind'])]
+        total_raw_infs = valid_df['dynamic_raw_inf'].sum()
+        
+        if total_raw_infs > 0:
+            stats = valid_df.groupby('dynamic_model').agg({
+                'dynamic_raw_inf': 'sum',
+                'dynamic_energy_j': 'sum',
+                'dynamic_model': 'count'
+            }).rename(columns={'dynamic_model': 'steps'}).sort_values('dynamic_raw_inf', ascending=True)
+
+            for name, row in stats.iterrows():
+                raw_count = row['dynamic_raw_inf']
+                energy = row['dynamic_energy_j']
+                steps = row['steps']
+                
+                pct_inf = (raw_count / total_raw_infs) * 100
+                pct_time = (steps / total_steps) * 100
+                
+                disp_name = (name[:25] + '..') if len(name) > 27 else name
+                print(f"{disp_name:<28} | {pct_time:>6.1f}% | {pct_inf:>6.1f}% | {raw_count:,.0f}".rjust(12) + 
+                           f" | {energy:,.0f}".rjust(13))
+        else:
+            print("No inferences performed.")
+            
+        print("-" * 100)
         
         self.plot_results(bl_traces)
 
