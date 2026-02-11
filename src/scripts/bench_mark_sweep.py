@@ -59,6 +59,11 @@ def test_model(model: pathlib.Path, model_dir: pathlib.Path, capture_dir : str, 
             "--elf_path", "out/coralmicro-app" #,"--nodata"
         ], check=True)
 
+
+
+        # python3 coralmicro/scripts/flashtool.py --build_dir out --elf_path out/coralmicro-app
+
+
         # Give board time to boot
         wait_for_serial(serial_port, timeout=30)
         # time.sleep(30)  # extra settle time for TPU context

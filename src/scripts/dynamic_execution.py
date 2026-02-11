@@ -6,9 +6,11 @@ from pathlib import Path
 import ground_track_stk as orb
 import tpunet_plotting as mdl
 
+# TODO: Sudden power failure case? e.g. higher base power, worse solar performance due to pointing
+
 class SatelliteInferenceSim:
     DEFAULT_CONFIG = {
-        'fov': 2.0,                # Sensor FOV (deg)
+        'fov': 2.0,                # Sensor FOV (deg) ## TODO: Derive from a static focal length/px
         'target_patch_km': 10.0,    # Ground feature size
         'tpu_dim': 224,            # TPU Input size
         'sensor_res': 4096,        # Camera Res

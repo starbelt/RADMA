@@ -10,7 +10,7 @@ These parameters define the sensor capabilities, target mission profile, and ope
 
 | Parameter | Symbol | Value (Default) | Unit | Description |
 | :--- | :---: | :--- | :--- | :--- |
-| **Field of View** | $\theta$ | `2.0` | deg | The angular extent of the optical sensor. |
+| **Field of View** | $\theta$ | `2.0` | deg | The angular extent of the optical sensor. | 
 | **Sensor Resolution** | $R_{sensor}$ | `4096` | px | Width of the square camera sensor. |
 | **TPU Input Dim** | $dim_{tpu}$ | `224` | px | Required input size for the edge accelerator. |
 | **Target Feature Size** | $L_{target}$ | `10.0` | km | Physical size of the ground feature to be detected. |

@@ -24,7 +24,7 @@ def analyze_orbit_regimes(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename='g
     
     # GSD
     # (swath_width_km * 1000) / sensor_res
-    df_orbit['gsd_m'] = (df_orbit['swath_width_km'] * 1000) / sensor_res
+    df_orbit['gsd_m'] = (df_orbit['swath_width_km'] * 1000) / sensor_res # TODO: Swap this around - find GSD using camera props. and alt - then back out Swath!
 
     ## Regime 1 - sample size stays the same/ full frame processed
     # We always read the full 4k sensor, downsample/tile it to 224x224 chunks for the TPU.
@@ -64,7 +64,7 @@ def analyze_orbit_regimes(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename='g
     ax3.plot(x, df_orbit['gsd_m'], 'purple')
     ax3.set_ylabel('GSD (m/px)')
     ax3.set_title('Ground Sampling Distance (Resolution)')
-    ax3.axhline(y=10, color='r', linestyle=':', label='Fire/Car Threshold (10m)')
+    ax3.axhline(y=10, color='r', linestyle=':', label='Fire/Car Threshold (10m)') # TODO: MORE ENTRIES - create regimes to help deployment decisions
     ax3.axhline(y=50, color='orange', linestyle=':', label='Ship Threshold (50m)')
     ax3.legend()
     ax3.grid(True, alpha=0.3)
@@ -275,11 +275,11 @@ if __name__ == "__main__":
 
     # ground_track_plots(df, filename = str(plotdir / "ground_track.png"))
     
-    # analyze_orbit_regimes(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename=str(plotdir /'ground_track_regimes_stk.png'))
+    analyze_orbit_regimes(df, sensor_res=4096, fov=2.0, tpu_dim=224, filename=str(plotdir /'ground_track_regimes_stk.png'))
 
-    analyze_dynamic_regimes(df, 
-                            sensor_res=4096, 
-                            fov=2.0, 
-                            tpu_dim=224, 
-                            target_patch_km=10.0, # 5km patches
-                            filename=str(plotdir / "orbit_regimes_discrete.png"))
+    # analyze_dynamic_regimes(df, 
+    #                         sensor_res=4096, 
+    #                         fov=2.0, 
+    #                         tpu_dim=224, 
+    #                         target_patch_km=10.0, # 5km patches
+    #                         filename=str(plotdir / "orbit_regimes_discrete.png"))
