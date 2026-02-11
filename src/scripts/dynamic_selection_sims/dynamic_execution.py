@@ -96,37 +96,51 @@ class SatelliteInferenceSim:
         self.config['calculated_fov_deg'] = np.degrees(fov_rad)
         print(f"[INFO] Calculated FOV: {self.config['calculated_fov_deg']:.2f} degrees")
 
-        # --- 2. Ground Geometry ---
-        # Ground speed (Velocity magnitude)
-        df['v_ground'] = np.sqrt(df['vx (km/sec)']**2 + df['vy (km/sec)']**2 + df['vz (km/sec)']**2) #TODO: get better results from STK
+        # Ground Track Velocity from ECEF inputs
+        r_vec = df[['x (km)', 'y (km)', 'z (km)']].values # pos
+        v_vec = df[['vx (km/sec)', 'vy (km/sec)', 'vz (km/sec)']].values # vel
         
-        # Swath = 2 * altitude * tan(FOV/2)
+        # radial unit vector 
+        r_norm = np.linalg.norm(r_vec, axis=1, keepdims=True)
+        r_unit = r_vec / r_norm
+        
+        # project Velocity onto Radial 
+        # dot product: (v . r_unit)
+        v_vertical_mag = np.sum(v_vec * r_unit, axis=1, keepdims=True)
+        v_vertical_vec = v_vertical_mag * r_unit
+        
+        # Subtract Vertical component to get Horizontal (Ground Track) Vector
+        v_ground_vec = v_vec - v_vertical_vec
+        
+        # Magnitude of the ground track vector
+        df['v_ground'] = np.linalg.norm(v_ground_vec, axis=1)
+
+        # swath = 2 * altitude * tan(FOV/2)
         df['swath_km'] = 2 * df['Alt (km)'] * np.tan(fov_rad / 2)
         
-        # Dwell time = Swath / Ground Velocity
+        # dwell time = swath / ground track velocity
         df['dwell_time_s'] = df['swath_km'] / df['v_ground']
         
         # GSD = Swath Width in meters / Sensor Resolution in pixels 
-        df['gsd_m'] = (df['swath_km'] * 1000.0) / self.config['sensor_res'] # Square sensor
+        df['gsd_m'] = (df['swath_km'] * 1000.0) / self.config['sensor_res'] 
 
-    
+        # Workload Logic 
         target_km = self.config['target_tile_km']
         tpu_dim = self.config['tpu_dim']
         
         # Calculate pixels per target tile based on current GSD
-        # Formula: (Target Size in m) / (GSD in m/px)
         df['px_per_tile'] = (target_km * 1000.0) / df['gsd_m']
         
-        # "Smart" 
-        # resolution is too poor (target is < min_pixels), don't run inference
-        # If GSD is high (poor res), px_per_tile is low.
+        # "Smart" Workload
         df['infs_per_tile'] = np.where(df['px_per_tile'] < self.config['min_pixels'], 
                                         0.0, 
                                         (df['px_per_tile'] / tpu_dim)**2)
         
+        # Total Tiles
         tilees_in_view = (df['swath_km']**2) / (target_km**2)
         df['n_inferences_req'] = np.ceil(tilees_in_view * df['infs_per_tile'])
         
+        # Power Logic 
         if 'Solar Intensity' in df.columns:
             df['solar_factor'] = df['Solar Intensity'].fillna(1.0)
             df['is_eclipse'] = df['solar_factor'] < 0.1

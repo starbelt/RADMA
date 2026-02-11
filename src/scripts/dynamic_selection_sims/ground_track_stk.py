@@ -70,29 +70,46 @@ class OrbitAnalyzer:
     def _calculate_physics(self):
         """
         The Core Physics Engine.
-        Order of Ops: Altitude -> GSD -> Swath -> Dwell Time -> Workload
+        Order of Ops: Altitude -> GSD -> Swath -> Ground Track Speed -> Workload
         """
         df = self.df
         c = self.config
 
-
+        # GSD & Swath 
         # GSD (m) = (Alt_km * Pitch_um) / FL_mm
         df['gsd_m'] = (df['Alt (km)'] * c['pixel_pitch_um']) / c['focal_length_mm']
         
         # Swath (km) = (GSD (m) * Sensor_Res_px) / 1000
         df['swath_width_km'] = (df['gsd_m'] * c['sensor_res_px']) / 1000.0
+
+        # Ground Track Velocity from ECEF inputs
+        r_vec = df[['x (km)', 'y (km)', 'z (km)']].values # pos
+        v_vec = df[['vx (km/sec)', 'vy (km/sec)', 'vz (km/sec)']].values # vel
         
+        # radial unit vector 
+        r_norm = np.linalg.norm(r_vec, axis=1, keepdims=True)
+        r_unit = r_vec / r_norm
+        
+        # Project Velocity onto Radial Vector
+        # Dot product: (v . r_unit)
+        v_vertical_mag = np.sum(v_vec * r_unit, axis=1, keepdims=True)
+        v_vertical_vec = v_vertical_mag * r_unit
+        
+        # Subtract Vertical component to get Horizontal (Ground Track) Vector
+        v_ground_vec = v_vec - v_vertical_vec
+        
+        # Magnitude of the ground track vector
+        df['v_ground_track'] = np.linalg.norm(v_ground_vec, axis=1)
 
-        # Calculate ground velocity magnitude
-        df['v_ground'] = np.sqrt(df['vx (km/sec)']**2 + df['vy (km/sec)']**2 + df['vz (km/sec)']**2)
-        df['t_dwell'] = df['swath_width_km'] / df['v_ground']
+        # Time Dynamics
+        # Dwell Time = Swath / Ground Track Speed
+        df['t_dwell'] = df['swath_width_km'] / df['v_ground_track']
 
+        # Workload Regimes
         # How many pixels represent our target tile?
         df['px_per_target_tile'] = (c['target_tile_km'] * 1000.0) / df['gsd_m']
         
         # Inferences per tile: (Pixels / TPU_Input)^2
-        # If > 1.0: Tiling Regime (Image is bigger than model)
-        # If < 1.0: Aggregation Regime (Image is smaller than model)
         raw_load = (df['px_per_target_tile'] / c['tpu_input_dim'])**2
         
         # Apply Blindness Threshold (If GSD is too poor to resolve the feature)
@@ -101,6 +118,8 @@ class OrbitAnalyzer:
         # Total Throughput
         tiles_in_view = (df['swath_width_km']**2) / (c['target_tile_km']**2)
         df['total_infs_per_frame'] = tiles_in_view * df['infs_per_tile']
+        
+        # Final Rate Requirement
         df['infs_per_sec'] = df['total_infs_per_frame'] / df['t_dwell']
 
         self.df = df
@@ -131,7 +150,7 @@ class OrbitAnalyzer:
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
         
-        # 1. Altitude & Speed
+        # Altitude & Speed
         color = 'tab:blue'
         ax1.set_ylabel('Altitude (km)', color=color)
         ax1.plot(x, df['Alt (km)'], color=color)
@@ -145,7 +164,7 @@ class OrbitAnalyzer:
         ax1_twin.tick_params(axis='y', labelcolor=color)
         ax1.set_title('Orbit Dynamics: Altitude vs Speed')
 
-        # 2. Resolution (GSD)
+        # Resolution (GSD)
         ax2.plot(x, df['gsd_m'], 'purple', linewidth=2)
         ax2.set_ylabel('GSD (m/px)')
         ax2.set_xlabel('True Anomaly (deg)')
@@ -175,7 +194,7 @@ class OrbitAnalyzer:
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
         
-        # 1. Tiling vs Aggregation
+        # Tiling vs Aggregation
         ax1.plot(x, df['px_per_target_tile'], 'k', label='Pixels per tile')
         ax1.axhline(y=c['tpu_input_dim'], color='r', linestyle='--', label=f'TPU Input ({c["tpu_input_dim"]}px)')
         ax1.axhline(y=c['min_resolvable_px'], color='gray', linestyle=':', label='Blindness Limit')
@@ -194,7 +213,7 @@ class OrbitAnalyzer:
         ax1.legend(loc='upper right')
         ax1.grid(True, alpha=0.3)
         
-        # 2. Total TPU Load
+        # Total TPU Load
         ax2.plot(x, df['infs_per_sec'], 'r', linewidth=2)
         ax2.set_ylabel('Inferences / Sec')
         ax2.set_xlabel('True Anomaly (deg)')
