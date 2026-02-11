@@ -1,0 +1,242 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+import sys
+
+# Attempt to import get_repo_root, fallback to local dir if missing
+try:
+    from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
+    ROOT_DIR = get_repo_root()
+except ImportError:
+    ROOT_DIR = Path(".")
+
+class OrbitAnalyzer:
+    """
+    A physics-based analyzer for satellite orbit workloads.
+    Derives GSD, Swath, and Compute requirements from sensor properties and orbital mechanics.
+    """
+    
+    DEFAULT_CONFIG = {
+        # Sensor Properties
+        'focal_length_mm': 50.0,
+        'pixel_pitch_um': 3.45,
+        'sensor_res_px': 4096,
+        
+        # Compute / AI Properties
+        'tpu_input_dim': 224,       # Model input size (px)
+        'target_tile_km': 5.0,     # The size of the ground feature we want to classify
+        'min_resolvable_px': 24,    # Blindness threshold: if feature is < min_resolvable_px , ignore it
+        
+        # Plotting Thresholds (Meters)
+        'gsd_thresholds': {
+            'Vehicle': 4.0,
+            'Container': 10.0,
+            'Ship': 30.0,
+            'Land Use': 100.0
+        }
+    }
+
+    def __init__(self, df_merged, config=None):
+        self.config = self.DEFAULT_CONFIG.copy()
+        if config: self.config.update(config)
+        self.df = self._preprocess_orbit_data(df_merged)
+        self._calculate_physics()
+
+    def _preprocess_orbit_data(self, df):
+        """Standardizes columns and ensures we only analyze whole number of orbits."""
+        df.columns = df.columns.str.strip()
+        
+        # Detect Orbit Wraps (True Anomaly resetting from ~360 to ~0)
+        if 'True Anomaly (deg)' in df.columns:
+            diffs = df['True Anomaly (deg)'].diff()
+            # Find indices where True Anomaly drops significantly (e.g. 359 -> 1)
+            reset_indices = df.index[diffs < -300].tolist()
+            
+            if len(reset_indices) > 0:
+                last_complete_idx = reset_indices[-1] - 1 #index before diff is last in previous orbit
+                
+                print(f"[INFO] {len(reset_indices)} orbit wraps detected.")
+                print(f"[INFO] Slicing data to end of last complete orbit (Index {last_complete_idx}).")
+                
+                return df.loc[:last_complete_idx].copy()
+            else:
+                print("[INFO] Less than one full orbit detected. Using entire dataset.")
+                return df.copy()
+        
+        return df.copy()
+
+
+    def _calculate_physics(self):
+        """
+        The Core Physics Engine.
+        Order of Ops: Altitude -> GSD -> Swath -> Dwell Time -> Workload
+        """
+        df = self.df
+        c = self.config
+
+
+        # GSD (m) = (Alt_km * Pitch_um) / FL_mm
+        df['gsd_m'] = (df['Alt (km)'] * c['pixel_pitch_um']) / c['focal_length_mm']
+        
+        # Swath (km) = (GSD (m) * Sensor_Res_px) / 1000
+        df['swath_width_km'] = (df['gsd_m'] * c['sensor_res_px']) / 1000.0
+        
+
+        # Calculate ground velocity magnitude
+        df['v_ground'] = np.sqrt(df['vx (km/sec)']**2 + df['vy (km/sec)']**2 + df['vz (km/sec)']**2)
+        df['t_dwell'] = df['swath_width_km'] / df['v_ground']
+
+        # How many pixels represent our target tile?
+        df['px_per_target_tile'] = (c['target_tile_km'] * 1000.0) / df['gsd_m']
+        
+        # Inferences per tile: (Pixels / TPU_Input)^2
+        # If > 1.0: Tiling Regime (Image is bigger than model)
+        # If < 1.0: Aggregation Regime (Image is smaller than model)
+        raw_load = (df['px_per_target_tile'] / c['tpu_input_dim'])**2
+        
+        # Apply Blindness Threshold (If GSD is too poor to resolve the feature)
+        df['infs_per_tile'] = np.where(df['px_per_target_tile'] < c['min_resolvable_px'], 0.0, raw_load)
+        
+        # Total Throughput
+        tiles_in_view = (df['swath_width_km']**2) / (c['target_tile_km']**2)
+        df['total_infs_per_frame'] = tiles_in_view * df['infs_per_tile']
+        df['infs_per_sec'] = df['total_infs_per_frame'] / df['t_dwell']
+
+        self.df = df
+
+    def print_stats(self):
+        """Prints key stats requested in TODOs."""
+        min_alt = self.df['Alt (km)'].min()
+        best_gsd = self.df['gsd_m'].min()
+        max_load = self.df['infs_per_sec'].max()
+        
+        print("-" * 30)
+        print(f"Orbit Statistics")
+        print("-" * 30)
+        print(f"Perigee Altitude:    {min_alt:.2f} km")
+        print(f"Best GSD (Perigee):  {best_gsd:.2f} m/px")
+        print(f"Peak TPU Load:       {max_load:.2f} infs/sec")
+        
+        # Calc FOV for verification
+        sensor_width = self.config['sensor_res_px'] * (self.config['pixel_pitch_um'] / 1000.0)
+        fov = 2 * np.degrees(np.arctan(sensor_width / (2 * self.config['focal_length_mm'])))
+        print(f"Calculated FOV:      {fov:.2f} deg")
+        print("-" * 30)
+
+    def plot_resolution_regimes(self, filename):
+        """Plots GSD and Altitude with regime thresholds."""
+        df = self.df
+        x = df['True Anomaly (deg)']
+        
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+        
+        # 1. Altitude & Speed
+        color = 'tab:blue'
+        ax1.set_ylabel('Altitude (km)', color=color)
+        ax1.plot(x, df['Alt (km)'], color=color)
+        ax1.tick_params(axis='y', labelcolor=color)
+        ax1.grid(True, alpha=0.3)
+        
+        ax1_twin = ax1.twinx()
+        color = 'tab:red'
+        ax1_twin.set_ylabel('Ground Speed (km/s)', color=color)
+        ax1_twin.plot(x, df['v_ground'], color=color, linestyle='--')
+        ax1_twin.tick_params(axis='y', labelcolor=color)
+        ax1.set_title('Orbit Dynamics: Altitude vs Speed')
+
+        # 2. Resolution (GSD)
+        ax2.plot(x, df['gsd_m'], 'purple', linewidth=2)
+        ax2.set_ylabel('GSD (m/px)')
+        ax2.set_xlabel('True Anomaly (deg)')
+        ax2.set_title('Ground Sampling Distance vs Requirements')
+        ax2.set_yscale('log')
+        
+        # Add Threshold Lines
+        colors = ['red', 'orange', 'green', 'blue']
+        for i, (label, val) in enumerate(self.config['gsd_thresholds'].items()):
+            c = colors[i % len(colors)]
+            ax2.axhline(y=val, color=c, linestyle=':', label=f'{label} ({val}m)')
+            
+        ax2.legend(loc='upper right')
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        if filename:
+            plt.savefig(filename)
+            print(f"Saved Resolution Plot to {filename}")
+        plt.close()
+
+    def plot_compute_regimes(self, filename):
+        """Plots the Tiling vs Aggregation regimes and TPU load."""
+        df = self.df
+        c = self.config
+        x = df['True Anomaly (deg)']
+        
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+        
+        # 1. Tiling vs Aggregation
+        ax1.plot(x, df['px_per_target_tile'], 'k', label='Pixels per tile')
+        ax1.axhline(y=c['tpu_input_dim'], color='r', linestyle='--', label=f'TPU Input ({c["tpu_input_dim"]}px)')
+        ax1.axhline(y=c['min_resolvable_px'], color='gray', linestyle=':', label='Blindness Limit')
+        
+        # Fill Regimes
+        ax1.fill_between(x, c['min_resolvable_px'], df['px_per_target_tile'], 
+                        where=(df['px_per_target_tile'] >= c['tpu_input_dim']), 
+                        color='green', alpha=0.1, label='Tiling Regime (High Res)')
+        ax1.fill_between(x, c['min_resolvable_px'], df['px_per_target_tile'], 
+                        where=(df['px_per_target_tile'] < c['tpu_input_dim']), 
+                        color='blue', alpha=0.1, label='Aggregation Regime (Low Res)')
+        
+        ax1.set_yscale('log')
+        ax1.set_ylabel(f'Pixels per {c["target_tile_km"]}km tile')
+        ax1.set_title('Compute Regimes: Tiling vs Aggregation')
+        ax1.legend(loc='upper right')
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. Total TPU Load
+        ax2.plot(x, df['infs_per_sec'], 'r', linewidth=2)
+        ax2.set_ylabel('Inferences / Sec')
+        ax2.set_xlabel('True Anomaly (deg)')
+        ax2.set_title('Total TPU Throughput Requirement')
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        if filename:
+            plt.savefig(filename)
+            print(f"Saved Compute Plot to {filename}")
+        plt.close()
+
+if __name__ == "__main__":
+
+    config = {
+        'focal_length_mm': 85.0,  # TODO: Find an existing satellite case study 
+        'pixel_pitch_um': 3.45,     
+        'sensor_res_px': 4096,
+        'target_tile_km': 10.0,
+        'min_resolvable_px': 24
+    }
+
+    data_root = ROOT_DIR / "data/stk"
+    plot_dir = ROOT_DIR / "results/plots"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        print("--- Loading STK Data ---")
+        v = pd.read_csv(data_root / 'HEO_Sat_Fixed_Position_Velocity.csv')
+        k = pd.read_csv(data_root / 'HEO_Sat_Classical_Orbit_Elements.csv')
+        l = pd.read_csv(data_root / 'HEO_Sat_LLA_Position.csv')
+        
+        # Merge on Time (UTCG)
+        df_merged = v.merge(k, on="Time (UTCG)").merge(l, on="Time (UTCG)")
+        
+        # run analysis
+        analyzer = OrbitAnalyzer(df_merged, config)
+        analyzer.print_stats()
+        
+        analyzer.plot_resolution_regimes(plot_dir / "stk_resolution_analysis.png")
+        analyzer.plot_compute_regimes(plot_dir / "stk_compute_regimes.png")
+        
+    except FileNotFoundError as e:
+        print(f"\n[Error] Could not find data files in {data_root}.")
+        print(f"Please check your path_utils or hardcode the path.\nDetails: {e}")

@@ -3,7 +3,7 @@ import os, json, os
 import flatbuffers
 import tflite
 import numpy as np
-from path_utils import get_repo_root
+from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
 
 # Setup
 REPO_ROOT = get_repo_root()

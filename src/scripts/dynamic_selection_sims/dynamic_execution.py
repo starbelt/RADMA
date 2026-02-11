@@ -3,27 +3,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-import ground_track_stk as orb
-import tpunet_plotting as mdl
+import libs.coral_tpu_characterization.src.scripts.dynamic_selection_sims.ground_track_stk as orb
+import libs.coral_tpu_characterization.src.scripts.hardware_characterization.plotting.tpunet_plotting as mdl
 
 # TODO: Sudden power failure case? e.g. higher base power, worse solar performance due to pointing
 
 class SatelliteInferenceSim:
     DEFAULT_CONFIG = {
-        'fov': 2.0,                # Sensor FOV (deg) ## TODO: Derive from a static focal length/px
-        'target_patch_km': 10.0,    # Ground feature size
-        'tpu_dim': 224,            # TPU Input size
-        'sensor_res': 4096,        # Camera Res
-        'min_pixels': 10,          # Blindness threshold
+        # --- NEW SENSOR PROPERTIES ---
+        'focal_length_mm': 50.0,   # Lens Focal Length
+        'pixel_pitch_um': 3.45,    # Pixel size (microns), e.g., Sony IMX250 is ~3.45um
+        'sensor_res': 4096,        # Camera Resolution (pixels) squared or width
+        # -----------------------------
 
-        
-        'battery_capacity_wh': 1.1,    # ~300mAh 1S Lipo (Pouch cell)
-        'solar_generation_mw': 200.0,  # ~1P Body Mounted Panel
-        'system_baseload_mw': 80.0,    # MCU Idle + Radio RX (No TPU)
+        'target_tile_km': 10.0,   # Ground feature size
+        'tpu_dim': 224,            # TPU Input size
+        'min_pixels': 10,          # Blindness threshold (min pixels required to resolve feature)
+
+        'battery_capacity_wh': 1.1,    
+        'solar_generation_mw': 200.0,  
+        'system_baseload_mw': 80.0,    
         'initial_charge_pct': 1.0,
 
         'min_safe_battery_pct': 0.05,
-        'naive_restart_threshold': 0.65, # Must charge to 65% before restarting inference
+        'naive_restart_threshold': 0.65, 
         
         # Switching
         'switch_latency_s': 0.0, 
@@ -84,25 +87,46 @@ class SatelliteInferenceSim:
         return df
 
     def calculate_geometry_and_workload(self, df):
-        fov_rad = np.deg2rad(self.config['fov'])
-        df['v_ground'] = np.sqrt(df['vx (km/sec)']**2 + df['vy (km/sec)']**2 + df['vz (km/sec)']**2)
+        sensor_width_mm = self.config['sensor_res'] * (self.config['pixel_pitch_um'] / 1000.0)
+        
+        # FOV = 2 * atan(sensor_width / (2 * focal_length))
+        fov_rad = 2 * np.arctan(sensor_width_mm / (2 * self.config['focal_length_mm']))
+        
+        # Save derived FOV for reference
+        self.config['calculated_fov_deg'] = np.degrees(fov_rad)
+        print(f"[INFO] Calculated FOV: {self.config['calculated_fov_deg']:.2f} degrees")
+
+        # --- 2. Ground Geometry ---
+        # Ground speed (Velocity magnitude)
+        df['v_ground'] = np.sqrt(df['vx (km/sec)']**2 + df['vy (km/sec)']**2 + df['vz (km/sec)']**2) #TODO: get better results from STK
+        
+        # Swath = 2 * altitude * tan(FOV/2)
         df['swath_km'] = 2 * df['Alt (km)'] * np.tan(fov_rad / 2)
+        
+        # Dwell time = Swath / Ground Velocity
         df['dwell_time_s'] = df['swath_km'] / df['v_ground']
         
-        target_km = self.config['target_patch_km']
-        res = self.config['sensor_res']
+        # GSD = Swath Width in meters / Sensor Resolution in pixels 
+        df['gsd_m'] = (df['swath_km'] * 1000.0) / self.config['sensor_res'] # Square sensor
+
+    
+        target_km = self.config['target_tile_km']
         tpu_dim = self.config['tpu_dim']
         
-        # "Smart" Workload
-        df['px_per_patch'] = (res / df['swath_km']) * target_km
-        df['infs_per_patch'] = np.where(df['px_per_patch'] < self.config['min_pixels'], 
+        # Calculate pixels per target tile based on current GSD
+        # Formula: (Target Size in m) / (GSD in m/px)
+        df['px_per_tile'] = (target_km * 1000.0) / df['gsd_m']
+        
+        # "Smart" 
+        # resolution is too poor (target is < min_pixels), don't run inference
+        # If GSD is high (poor res), px_per_tile is low.
+        df['infs_per_tile'] = np.where(df['px_per_tile'] < self.config['min_pixels'], 
                                         0.0, 
-                                        (df['px_per_patch'] / tpu_dim)**2)
+                                        (df['px_per_tile'] / tpu_dim)**2)
         
-        patches_in_view = (df['swath_km']**2) / (target_km**2)
-        df['n_inferences_req'] = np.ceil(patches_in_view * df['infs_per_patch'])
+        tilees_in_view = (df['swath_km']**2) / (target_km**2)
+        df['n_inferences_req'] = np.ceil(tilees_in_view * df['infs_per_tile'])
         
-        # Solar Logic
         if 'Solar Intensity' in df.columns:
             df['solar_factor'] = df['Solar Intensity'].fillna(1.0)
             df['is_eclipse'] = df['solar_factor'] < 0.1
@@ -386,7 +410,7 @@ class SatelliteInferenceSim:
             pct_blind = (blind / total_steps) * 100
             
             print(f"{name:<26} | {score:,.0f}".ljust(43) + 
-                  f" | {pct_dead:>5.1f}% | {pct_blind:>5.1f}% | ", end="")
+                f" | {pct_dead:>5.1f}% | {pct_blind:>5.1f}% | ", end="")
             print("") 
 
         # dynamic Results
@@ -402,7 +426,7 @@ class SatelliteInferenceSim:
         gain_vs_naive = ((dyn_total - score_worst_naive) / score_worst_naive * 100) if score_worst_naive > 0 else 0
         
         print(f"{'Dynamic Switching (Ours)':<26} | {dyn_total:,.0f}".ljust(43) + 
-              f" | {pct_dyn_dead:>5.1f}% | {pct_dyn_blind:>5.1f}% | +{gain_vs_best:.1f}% (vs Best Static)")
+            f" | {pct_dyn_dead:>5.1f}% | {pct_dyn_blind:>5.1f}% | +{gain_vs_best:.1f}% (vs Best Static)")
         print(f"{'':<43}             |        |        | +{gain_vs_naive:.1f}% (vs Naive)")
         print("="*100)
         
@@ -431,7 +455,7 @@ class SatelliteInferenceSim:
                 
                 disp_name = (name[:25] + '..') if len(name) > 27 else name
                 print(f"{disp_name:<28} | {pct_time:>6.1f}% | {pct_inf:>6.1f}% | {raw_count:,.0f}".rjust(12) + 
-                           f" | {energy:,.0f}".rjust(13))
+                        f" | {energy:,.0f}".rjust(13))
         else:
             print("No inferences performed.")
             
@@ -466,10 +490,10 @@ class SatelliteInferenceSim:
         
         # Solar/Eclipse
         if 'is_eclipse' in self.df.columns:
-             mask = self.df['is_eclipse'].values.astype(float)
-             width = np.diff(x, append=x.iloc[-1])
-             width[-1] = width[-2] if len(width) > 1 else 1.0
-             for ax in [ax1, ax2, ax3]:
+            mask = self.df['is_eclipse'].values.astype(float)
+            width = np.diff(x, append=x.iloc[-1])
+            width[-1] = width[-2] if len(width) > 1 else 1.0
+            for ax in [ax1, ax2, ax3]:
                 ax.bar(x, mask * ax.get_ylim()[1], width=width, color='gray', alpha=0.15, align='edge', label='Eclipse')
 
         # Model Strip
@@ -500,7 +524,7 @@ class SatelliteInferenceSim:
         plt.savefig(self.output_dir / "sequential_battery_sim.png", dpi=300)
 
 if __name__ == "__main__":
-    from path_utils import get_repo_root
+    from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
     REPO_ROOT = get_repo_root()
 
     sim = SatelliteInferenceSim(

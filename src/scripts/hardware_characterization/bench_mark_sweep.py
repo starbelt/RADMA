@@ -2,7 +2,7 @@ import argparse, subprocess, time, csv, pathlib
 
 import numpy as np
 import pandas as pd
-from saleae_parsing import SaleaeOutputParsing
+from libs.coral_tpu_characterization.src.scripts.utils.saleae_parsing import SaleaeOutputParsing
 from datetime import datetime
 from saleae import automation # type:ignore - I promise it exists
 

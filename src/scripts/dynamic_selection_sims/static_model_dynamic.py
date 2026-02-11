@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from model_data_manager import ModelDataManager 
+from libs.coral_tpu_characterization.src.scripts.utils.model_data_manager import ModelDataManager 
 
 class SatelliteInferenceSim:
     DEFAULT_CONFIG = {
@@ -507,7 +507,7 @@ class SatelliteInferenceSim:
         plt.savefig(self.output_dir / "sequential_battery_sim.png", dpi=300)
 
 if __name__ == "__main__":
-    from path_utils import get_repo_root
+    from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
     REPO_ROOT = get_repo_root()
 
     sim = SatelliteInferenceSim(

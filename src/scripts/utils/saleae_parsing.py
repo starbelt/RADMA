@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter
 import pathlib, os
-from path_utils import get_repo_root
+from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
 import matplotlib.pyplot as plt
 
 # helpers and diagnostic plots
@@ -187,7 +187,7 @@ class SaleaeOutputParsing:
         return rising[long_mask], falling[long_mask]
     
     def find_idle_power(self):
-        from path_utils import get_repo_root
+        from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
         import os
 
         idle_csv = get_repo_root() / "results/captures/idle_power/idle.csv"

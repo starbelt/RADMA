@@ -6,9 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from os import path
 from adjustText import adjust_text
-from ParamCounts import ParamCounts
-from saleae_parsing import SaleaeOutputParsing
-from path_utils import get_repo_root
+from libs.coral_tpu_characterization.src.scripts.utils.ParamCounts import ParamCounts
+from libs.coral_tpu_characterization.src.scripts.utils.saleae_parsing import SaleaeOutputParsing
+from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
 
 REPO_ROOT = get_repo_root()
 

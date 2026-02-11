@@ -8,9 +8,9 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d import Axes3D
 
-from saleae_parsing import SaleaeOutputParsing
-from path_utils import get_repo_root
-from ParamCounts import ParamCounts
+from libs.coral_tpu_characterization.src.scripts.utils.saleae_parsing import SaleaeOutputParsing
+from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
+from libs.coral_tpu_characterization.src.scripts.utils.ParamCounts import ParamCounts
 
 
 plt.rcParams.update({'font.size': 16})  # Base font size

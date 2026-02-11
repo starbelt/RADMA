@@ -5,8 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from os import path
 
-from path_utils import get_repo_root
-from model_stats_plotting import collect_results
+from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
+from libs.coral_tpu_characterization.src.scripts.hardware_characterization.plotting.model_stats_plotting import collect_results
 
 def power_inference_dataframe(results_dir: pathlib.Path,
                 model_category=None, run_names=None, sheet = "data/Model_Stats.xlsx"):
