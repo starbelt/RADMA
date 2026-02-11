@@ -1,12 +1,14 @@
-import pathlib
-import ipympl
+import pathlib, sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from os import path
 
-from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
-from libs.coral_tpu_characterization.src.scripts.hardware_characterization.plotting.model_stats_plotting import collect_results
+scripts_dir = pathlib.Path(__file__).resolve().parent.parent
+sys.path.append(str(scripts_dir))
+
+from utils.path_utils import get_repo_root
+from hardware_characterization.plotting.model_stats_plotting import collect_results
 
 def power_inference_dataframe(results_dir: pathlib.Path,
                 model_category=None, run_names=None, sheet = "data/Model_Stats.xlsx"):
@@ -370,9 +372,7 @@ def budget_correct_loop(df: pd.DataFrame, buffers: list, frame_times: list, resu
 
 
 if __name__ == "__main__":
-
     REPO_ROOT = get_repo_root()
-
     ## Baseline Model Parameter Plotting
     #plots.img_class_plt()
     #plots.obj_det_plt()

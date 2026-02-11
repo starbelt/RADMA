@@ -6,7 +6,9 @@ import sys
 
 # Attempt to import get_repo_root, fallback to local dir if missing
 try:
-    from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
+    scripts_dir = Path(__file__).resolve().parent.parent
+    sys.path.append(str(scripts_dir))
+    from utils.path_utils import get_repo_root
     ROOT_DIR = get_repo_root()
 except ImportError:
     ROOT_DIR = Path(".")
@@ -229,9 +231,9 @@ class OrbitAnalyzer:
 if __name__ == "__main__":
 
     config = {
-        'focal_length_mm': 85.0,  # TODO: Find an existing satellite case study 
-        'pixel_pitch_um': 3.45,     
-        'sensor_res_px': 4096,
+        'focal_length_mm': 400.0,
+        'pixel_pitch_um': 3.45,
+        'sensor_res_px': 4096, 
         'target_tile_km': 10.0,
         'min_resolvable_px': 24
     }

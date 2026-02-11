@@ -74,7 +74,7 @@ class SatelliteInferenceSim:
         df.columns = df.columns.str.strip()
 
         ta = df['True Anomaly (deg)'].values
-        diffs = np.diff(ta)
+        diffs = np.diff(ta) # type: ignore
         wrap_indices = np.where(diffs < -300)[0]
         
         if len(wrap_indices) > 0:
