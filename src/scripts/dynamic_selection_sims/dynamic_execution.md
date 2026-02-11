@@ -159,3 +159,19 @@ $$E_{battery}(t+1) = \text{CLIP} \left( E_{battery}(t) + E_{harvest} - E_{consum
 The battery state can't go above 100% or below 0%
 
 This loop continues until the end of the orbit data.
+
+## Note on Myolnia Velocity
+
+orbit params used:
+
+| Parameter | Symbol |
+| :--- | :---: |
+| **$\mu** | 398,600 km$^3$/$s^2$ |
+| **a** | 26,600 km |
+| **$r_p$** | 7271 |
+
+took a quick back of the envelope calc with vis viva
+
+$$v_p = \sqrt{\mu (\frac{2}{r_p} - \frac{1}{a})} \approx 9.7 \text{km/s}$$
+
+This doesn't include the rotation of the earth, but that would only account for some fraction of a km/s

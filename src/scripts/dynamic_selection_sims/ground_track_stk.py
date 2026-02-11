@@ -28,14 +28,15 @@ class OrbitAnalyzer:
         # Compute / AI Properties
         'tpu_input_dim': 224,       # Model input size (px)
         'target_tile_km': 5.0,     # The size of the ground feature we want to classify
-        'min_resolvable_px': 24,    # Blindness threshold: if feature is < min_resolvable_px , ignore it
+        'min_resolvable_px': 24,    # Standard detail threshold (e.g. for cars)
+        'coarse_resolvable_px': 4,  # Coarse threshold (e.g. for fires/clouds)
         
         # Plotting Thresholds (Meters)
         'gsd_thresholds': {
-            'Vehicle': 4.0,
-            'Container': 10.0,
-            'Ship': 30.0,
-            'Land Use': 100.0
+            'Aircraft/Buildings': 4.0,
+            'Lg. Ships': 15.0,
+            'Disaster/Fire': 30.0,  
+            'Regional/Climate': 375.0 
         }
     }
 
@@ -56,12 +57,10 @@ class OrbitAnalyzer:
             reset_indices = df.index[diffs < -300].tolist()
             
             if len(reset_indices) > 0:
-                last_complete_idx = reset_indices[-1] - 1 #index before diff is last in previous orbit
+                first_complete_idx = reset_indices[0] - 1 
                 
-                print(f"[INFO] {len(reset_indices)} orbit wraps detected.")
-                print(f"[INFO] Slicing data to end of last complete orbit (Index {last_complete_idx}).")
-                
-                return df.loc[:last_complete_idx].copy()
+                print(f"[INFO] Multi-orbit data found. Slicing to first single orbit (Index {first_complete_idx}).")
+                return df.loc[:first_complete_idx].copy()
             else:
                 print("[INFO] Less than one full orbit detected. Using entire dataset.")
                 return df.copy()
@@ -114,8 +113,12 @@ class OrbitAnalyzer:
         # Inferences per tile: (Pixels / TPU_Input)^2
         raw_load = (df['px_per_target_tile'] / c['tpu_input_dim'])**2
         
-        # Apply Blindness Threshold (If GSD is too poor to resolve the feature)
-        df['infs_per_tile'] = np.where(df['px_per_target_tile'] < c['min_resolvable_px'], 0.0, raw_load)
+        # Dynamic Blindness Threshold
+        # If GSD > 20m (Low Res), use coarse threshold (4px) -> looking for big intense things
+        # If GSD < 20m (High Res), use fine threshold (24px) -> looking for detailed things
+        thresholds = np.where(df['gsd_m'] > 20.0, c['coarse_resolvable_px'], c['min_resolvable_px'])
+        
+        df['infs_per_tile'] = np.where(df['px_per_target_tile'] < thresholds, 0.0, raw_load)
         
         # Total Throughput
         tiles_in_view = (df['swath_width_km']**2) / (c['target_tile_km']**2)
@@ -162,7 +165,7 @@ class OrbitAnalyzer:
         ax1_twin = ax1.twinx()
         color = 'tab:red'
         ax1_twin.set_ylabel('Ground Speed (km/s)', color=color)
-        ax1_twin.plot(x, df['v_ground'], color=color, linestyle='--')
+        ax1_twin.plot(x, df['v_ground_track'], color=color, linestyle='--')
         ax1_twin.tick_params(axis='y', labelcolor=color)
         ax1.set_title('Orbit Dynamics: Altitude vs Speed')
 
@@ -199,13 +202,16 @@ class OrbitAnalyzer:
         # Tiling vs Aggregation
         ax1.plot(x, df['px_per_target_tile'], 'k', label='Pixels per tile')
         ax1.axhline(y=c['tpu_input_dim'], color='r', linestyle='--', label=f'TPU Input ({c["tpu_input_dim"]}px)')
-        ax1.axhline(y=c['min_resolvable_px'], color='gray', linestyle=':', label='Blindness Limit')
+        
+        # Calculate dynamic threshold for visualization
+        dynamic_threshold = np.where(df['gsd_m'] > 20.0, c['coarse_resolvable_px'], c['min_resolvable_px'])
+        ax1.plot(x, dynamic_threshold, color='gray', linestyle=':', label='Dynamic Blindness Limit')
         
         # Fill Regimes
-        ax1.fill_between(x, c['min_resolvable_px'], df['px_per_target_tile'], 
+        ax1.fill_between(x, dynamic_threshold, df['px_per_target_tile'], 
                         where=(df['px_per_target_tile'] >= c['tpu_input_dim']), 
                         color='green', alpha=0.1, label='Tiling Regime (High Res)')
-        ax1.fill_between(x, c['min_resolvable_px'], df['px_per_target_tile'], 
+        ax1.fill_between(x, dynamic_threshold, df['px_per_target_tile'], 
                         where=(df['px_per_target_tile'] < c['tpu_input_dim']), 
                         color='blue', alpha=0.1, label='Aggregation Regime (Low Res)')
         
