@@ -249,7 +249,7 @@ if __name__ == "__main__":
     plot_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        print("--- Loading STK Data ---")
+        print(" Loading STK Data")
         v = pd.read_csv(data_root / 'HEO_Sat_Fixed_Position_Velocity.csv')
         k = pd.read_csv(data_root / 'HEO_Sat_Classical_Orbit_Elements.csv')
         l = pd.read_csv(data_root / 'HEO_Sat_LLA_Position.csv')
