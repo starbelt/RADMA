@@ -87,14 +87,12 @@ class SatelliteInferenceSim:
         return df
 
     def calculate_geometry_and_workload(self, df):
-        sensor_width_mm = self.config['sensor_res'] * (self.config['pixel_pitch_um'] / 1000.0)
+        # GSD & Swath 
+        # GSD (m) = (Alt_km * Pitch_um) / FL_mm
+        df['gsd_m'] = (df['Alt (km)'] * self.config['pixel_pitch_um']) / self.config['focal_length_mm']
         
-        # FOV = 2 * atan(sensor_width / (2 * focal_length))
-        fov_rad = 2 * np.arctan(sensor_width_mm / (2 * self.config['focal_length_mm']))
-        
-        # Save derived FOV for reference
-        self.config['calculated_fov_deg'] = np.degrees(fov_rad)
-        print(f"[INFO] Calculated FOV: {self.config['calculated_fov_deg']:.2f} degrees")
+        # Swath (km) = (GSD (m) * Sensor_Res_px) / 1000
+        df['swath_km'] = (df['gsd_m'] * self.config['sensor_res']) / 1000.0
 
         # Ground Track Velocity from ECEF inputs
         r_vec = df[['x (km)', 'y (km)', 'z (km)']].values # pos
@@ -104,8 +102,8 @@ class SatelliteInferenceSim:
         r_norm = np.linalg.norm(r_vec, axis=1, keepdims=True)
         r_unit = r_vec / r_norm
         
-        # project Velocity onto Radial 
-        # dot product: (v . r_unit)
+        # Project Velocity onto Radial Vector
+        # Dot product: (v . r_unit)
         v_vertical_mag = np.sum(v_vec * r_unit, axis=1, keepdims=True)
         v_vertical_vec = v_vertical_mag * r_unit
         
@@ -115,14 +113,9 @@ class SatelliteInferenceSim:
         # Magnitude of the ground track vector
         df['v_ground'] = np.linalg.norm(v_ground_vec, axis=1)
 
-        # swath = 2 * altitude * tan(FOV/2)
-        df['swath_km'] = 2 * df['Alt (km)'] * np.tan(fov_rad / 2)
-        
-        # dwell time = swath / ground track velocity
+        # Time Dynamics
+        # Dwell Time = Swath / Ground Track Speed
         df['dwell_time_s'] = df['swath_km'] / df['v_ground']
-        
-        # GSD = Swath Width in meters / Sensor Resolution in pixels 
-        df['gsd_m'] = (df['swath_km'] * 1000.0) / self.config['sensor_res'] 
 
         # Workload Logic 
         target_km = self.config['target_tile_km']
