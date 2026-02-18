@@ -266,7 +266,7 @@ class ContinuousSatSim:
             # Frame generation
             # Calculate inferences needed for a frame at this moment
             infs_for_this_second = row['demand_infs_per_sec'] * dt
-            
+
             if infs_for_this_second > 1.0: # Filter out tiny noise
                 if len(frame_buffer) < cfg['buffer_max_frames']:
                     new_job = FrameJob(total_frames_generated, infs_for_this_second, t_rel)
@@ -285,7 +285,10 @@ class ContinuousSatSim:
             processed_infs_step = 0
             processing_energy_j = 0
             
-            active_model_name = "Idle"
+            if row['px_per_object'] < cfg['min_pixels']:
+                active_model_name = "Blind"
+            else:
+                active_model_name = "Idle"
             selection_reason = "None"
             current_accuracy = 0.0
 
@@ -325,7 +328,9 @@ class ContinuousSatSim:
                         current_job.assigned_model = model
                         selection_reason = reason
                     else:
-                        active_model_name = "Idle"
+                        if processed_infs_step == 0:
+                            active_model_name = "Idle"
+
                         break # Nothing to do
                 
                 # Process Current Job
@@ -424,28 +429,58 @@ class ContinuousSatSim:
         new_data['is_lit'] = is_lit
         new_df = pd.DataFrame(new_data)
 
-        # Workload Geometry
+        # 1. Ground Sample Distance (GSD)
+        #    How many meters does one pixel represent?
+        #    Higher Altitude = Larger GSD = Lower Resolution
         new_df['gsd_m'] = (new_df['Alt (km)'] * cfg['pixel_pitch_um']) / cfg['focal_length_mm']
+        
+        # 2. Swath Width
+        #    Total width of ground visible to the sensor
         new_df['swath_km'] = (new_df['gsd_m'] * cfg['sensor_res']) / 1000.0
         
+        # 3. Velocity Calculation (Keep existing logic)
         r = new_df[['x (km)', 'y (km)', 'z (km)']].values
         v = new_df[['vx (km/sec)', 'vy (km/sec)', 'vz (km/sec)']].values
         r_norm = np.linalg.norm(r, axis=1, keepdims=True)
-        # Velocity rejection to get ground track velocity approx
         v_vert = np.sum(v * (r/r_norm), axis=1, keepdims=True) * (r/r_norm)
         v_ground = np.linalg.norm(v - v_vert, axis=1)
-        
-        # Store for logging
         new_df['v_ground_km_s'] = v_ground
         
-        target_km = cfg['target_tile_km']
-        # Approx Inferences per "Tile/Frame Area"
-        area_per_sec = new_df['swath_km'] * v_ground
-        tile_area = target_km**2
-        
-        new_df['demand_infs_per_sec'] = area_per_sec / tile_area
-        return new_df
+        # 4. Dwell Time
+        #    How long a specific point on the ground remains in the camera's FOV.
+        #    (Avoid divide by zero errors with a tiny epsilon)
+        new_df['dwell_time_s'] = new_df['swath_km'] / (v_ground + 1e-9)
 
+        # 5. Object Resolution Calculation
+        #    We are looking for a physical object of size 'target_tile_km'.
+        #    How many pixels does that object occupy?
+        target_size_m = cfg['target_tile_km'] * 1000.0
+        new_df['px_per_object'] = target_size_m / new_df['gsd_m']
+        
+        # 6. Smart Inference Scaling
+        #    IF pixels < min_pixels: We are BLIND. Demand = 0.
+        #    ELSE: We need (pixels / 224)^2 inferences to cover that object.
+        #    (This simulates running a sliding window over the object)
+        tpu_dim = cfg['tpu_dim']
+        infs_per_object = np.where(
+            new_df['px_per_object'] < cfg['min_pixels'],
+            0.0, # Blind
+            (new_df['px_per_object'] / tpu_dim)**2
+        )
+        
+        # 7. Total Frame Demand
+        #    How many "objects" fit in our current FOV?
+        #    (Approximating FOV area as swath_km^2)
+        objects_in_fov = (new_df['swath_km'] / cfg['target_tile_km'])**2
+        
+        #    Total inferences required to process ONE full snapshot of the ground
+        total_infs_per_frame = objects_in_fov * infs_per_object
+        
+        # 8. Demand Rate (Inferences Per Second)
+        #    We must process the frame within the dwell time to maintain continuous coverage.
+        new_df['demand_infs_per_sec'] = total_infs_per_frame / new_df['dwell_time_s']
+        
+        return new_df
     def _plot_telemetry(self, logs, case_name, cfg):
         t = np.array(logs['time_rel'])
         t_plot = t - t[0]
