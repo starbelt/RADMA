@@ -27,12 +27,12 @@ class FrameJob:
 
 class ContinuousSatSim:
     DEFAULT_SYSTEM = {
-        'focal_length_mm': 50.0,
+        'focal_length_mm': 300.0,
         'pixel_pitch_um': 3.45,
         'sensor_res': 4096,
         'target_tile_km': 10.0,
         'tpu_dim': 224,
-        'min_pixels': 10,
+        'min_pixels': 5,
         'battery_capacity_wh': 1.1,
         'solar_generation_mw': 200.0,
         'system_baseload_mw': 80.0,
