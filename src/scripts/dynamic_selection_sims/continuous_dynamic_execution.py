@@ -32,23 +32,56 @@ class ContinuousSatSim:
     and compute workloads using both a dynamic model selection strategy and 
     a naive baseline for comparison.
     """
-    DEFAULT_SYSTEM = {
-        'focal_length_mm': 500.0,
+    
+    BASE_SYSTEM = {
         'pixel_pitch_um': 3.45,
         'sensor_res': 4096,
-        'target_tile_km': 20.0,
         'tpu_dim': 224,
-        'min_pixels': 1,
-        
-        'battery_capacity_wh': 1.1,
-        'solar_generation_mw': 200.0,
-        'system_baseload_mw': 80.0,
-        'buffer_max_frames': 50, 
+        'min_pixels': 10,
+        'system_baseload_mw': 150.0,
         'sim_dt_s': 1.0,
-        'initial_charge_pct': 0.9,
-        'compute_enable_pct': 0.65,
-        'compute_disable_pct': 0.20,
+        
+        # Power Management Logic (Hysteresis)
+        'initial_charge_pct': 0.85,
+        'compute_enable_pct': 0.70,
+        'compute_disable_pct': 0.45,
     }
+
+    @staticmethod
+    def get_heo_config():
+        """
+        HEO Configuration: Optimized for long-range observation.
+        - Lens: 300mm Telephoto (High magnification for high altitude)
+        - Power: Larger Battery (5.2Wh) for extended operations/eclipses
+        - Solar: 800mW (Body mounted + small deployable)
+        """
+        cfg = ContinuousSatSim.BASE_SYSTEM.copy()
+        cfg.update({
+            'focal_length_mm': 300.0,
+            'target_tile_km': 50.0,
+            'battery_capacity_wh': 2.0,
+            'solar_generation_mw': 400.0,
+            'buffer_max_frames': 200,
+        })
+        return cfg
+
+    @staticmethod
+    def get_sso_config():
+        """
+        SSO Configuration: Optimized for high-speed mapping.
+        - Lens: 85mm Standard (Wider field of view for low altitude)
+        - Power: High Solar (1200mW) for rapid recharge between eclipses
+        - Battery: Standard (2.6Wh) - lighter weight, relies on generation
+        """
+        cfg = ContinuousSatSim.BASE_SYSTEM.copy()
+        cfg.update({
+            'focal_length_mm': 85.0,
+            'target_tile_km': 20.0,
+            'battery_capacity_wh': 1.5,  # ~1x 18650 cell
+            'solar_generation_mw': 800.0,
+            'buffer_max_frames': 500,
+        })
+        return cfg
 
     def __init__(self, orbit_data_path, model_json_path, output_dir, sat_prefix='HEO', num_orbits=1, model_source='Custom', naive_model_name=None):
         """
@@ -80,6 +113,10 @@ class ContinuousSatSim:
         df['acc_decimal'] = df['Top-1 Accuracy'] / 100.0
         df['lat_s'] = df['Measured Inference Time (ms)'] / 1000.0
         df['eng_j'] = df['Energy per Inference (mJ)'] / 1000.0
+        
+        # Precompute Correct Inferences Per Second/Joule for report
+        df['correct_infs_per_sec'] = (1.0 / df['lat_s']) * df['acc_decimal']
+        df['correct_infs_per_joule'] = (1.0 / df['eng_j']) * df['acc_decimal']
         
         return df
 
@@ -193,19 +230,13 @@ class ContinuousSatSim:
     def run_case_study(self, case_name, config_overrides=None, events=None):
         """
         Executes the main simulation loop.
-        1. Interpolates orbit data to the simulation time step.
-        2. Iterates through time, calculating power generation, data ingestion, and workload.
-        3. Runs two parallel logic streams:
-           - Dynamic: Uses _select_model to adapt to constraints.
-           - Naive: Runs a fixed model at max power whenever battery permits.
-        4. Logs telemetry and generates plots.
         """
         if self.raw_orbit.empty:
             print(f"[SKIP] Skipping {case_name} (Orbit data is empty or failed to load)")
             return
 
         print(f"\n>>> Running Case Study: {case_name}")
-        cfg = self.DEFAULT_SYSTEM.copy()
+        cfg = self.BASE_SYSTEM.copy()
         if config_overrides: cfg.update(config_overrides)
         
         sim_data = self._interpolate_orbit(self.raw_orbit, self.sunlight_intervals, cfg['sim_dt_s'], cfg)
@@ -236,8 +267,18 @@ class ContinuousSatSim:
         
         # Naive State
         n_battery_j = current_battery_j
+        n_recharging = False
         n_buffer = deque()
         n_total_correct = 0
+
+        # Reporting Stats
+        report_stats = {
+            'time_limited_count': 0,
+            'energy_limited_count': 0,
+            'buffered_count': 0,
+            'unprocessed_count': 0,
+            'total_steps': len(sim_data)
+        }
 
         logs = {
             'time_rel': [], 'battery_wh': [], 'buffer_count': [], 
@@ -268,16 +309,24 @@ class ContinuousSatSim:
             env_energy_j = (solar_w - base_w) * dt 
             infs_for_this_second = row['demand_infs_per_sec'] * dt
             
-            # Populate Buffers
+            # Populate Buffers & Track Frame Stats
+            buffered_this_step = False
             if row['px_per_object'] < cfg['min_pixels']:
                 active_model_name = "Blind" 
+                report_stats['unprocessed_count'] += 1 # Technically unprocessed as it's invalid
             else:
                 active_model_name = "Idle"
                 if infs_for_this_second > 1.0: 
                     if len(frame_buffer) < cfg['buffer_max_frames']:
                         frame_buffer.append(FrameJob(i, infs_for_this_second, t_rel))
+                        buffered_this_step = True
                         if naive_model is not None:
                             n_buffer.append(FrameJob(i, infs_for_this_second, t_rel))
+                    else:
+                        report_stats['unprocessed_count'] += 1 # Buffer overflow drop
+            
+            if buffered_this_step and len(frame_buffer) > 1:
+                 report_stats['buffered_count'] += 1
 
             # --- Dynamic Simulation Logic ---
             if current_battery_j < limit_disable_j: is_recharging = True
@@ -287,6 +336,7 @@ class ContinuousSatSim:
             processed_infs_step = 0
             processing_energy_j = 0
             current_accuracy = 0.0
+            step_limitation = None # For report stats
 
             while time_available_s > 0:
                 if cpu_blocked: active_model_name = "BLOCKED"; break
@@ -297,7 +347,11 @@ class ContinuousSatSim:
                     if len(frame_buffer) > 0:
                         current_job = frame_buffer.popleft()
                         energy_budget_j = current_battery_j - limit_disable_j 
-                        model, _ = self._select_model(energy_budget_j, time_available_s, current_job.total_inferences)
+                        model, reason = self._select_model(energy_budget_j, time_available_s, current_job.total_inferences)
+                        
+                        # Track limitation reason for the *selection*
+                        if reason == "Time_Limited": step_limitation = "Time"
+                        elif reason == "Energy_Limited": step_limitation = "Energy"
                         
                         if model is None: 
                             frame_buffer.appendleft(current_job)
@@ -329,26 +383,34 @@ class ContinuousSatSim:
                     
                     if current_job.remaining_inferences <= 1e-6: current_job = None
 
+            # Stats Accumulation
+            if step_limitation == "Time": report_stats['time_limited_count'] += 1
+            elif step_limitation == "Energy": report_stats['energy_limited_count'] += 1
+            
             total_load_w = base_w + (processing_energy_j / dt)
             current_battery_j = np.clip(current_battery_j + env_energy_j, 0, BATTERY_CAPACITY_J)
             total_infs_correct += processed_infs_step * current_accuracy
 
-            # --- Naive Simulation Logic ---
             if naive_model is not None:
-                step_energy_demand_j = dt * naive_power_w
+                if n_battery_j < limit_disable_j:
+                    n_recharging = True
+                elif n_recharging and n_battery_j > limit_enable_j:
+                    n_recharging = False
                 
-                if cpu_blocked or n_battery_j <= limit_disable_j:
+                if cpu_blocked or n_recharging:
                     n_battery_j = np.clip(n_battery_j + env_energy_j, 0, BATTERY_CAPACITY_J)
                 else:
-                    # Run blindly until battery dies or time runs out
+                    available_energy_j = max(0, n_battery_j - limit_disable_j)
+                    step_energy_demand_j = dt * naive_power_w
+                    
                     time_runnable_s = dt
-                    if n_battery_j < step_energy_demand_j:
-                        time_runnable_s = n_battery_j / naive_power_w
+                    if available_energy_j < step_energy_demand_j:
+                        time_runnable_s = available_energy_j / naive_power_w
+                        n_recharging = True 
                     
                     n_battery_j -= (time_runnable_s * naive_power_w)
                     potential_infs = time_runnable_s * naive_throughput_ips
                     
-                    # Consume buffer
                     processed_naive_infs = 0
                     while potential_infs > 0 and len(n_buffer) > 0:
                         job = n_buffer[0]
@@ -360,8 +422,7 @@ class ContinuousSatSim:
                     
                     n_battery_j = np.clip(n_battery_j + env_energy_j, 0, BATTERY_CAPACITY_J)
                     n_total_correct += processed_naive_infs * naive_model['acc_decimal']
-
-            # --- Logging ---
+            # logs
             buffer_backlog = sum(j.remaining_inferences for j in frame_buffer)
             if current_job: buffer_backlog += current_job.remaining_inferences
 
@@ -382,8 +443,55 @@ class ContinuousSatSim:
             logs['naive_cum_correct'].append(n_total_correct)
 
         self._plot_telemetry(logs, case_name, cfg)
-        print(f"[{case_name}] Dynamic Correct: {total_infs_correct:,.0f} | Naive Correct: {n_total_correct:,.0f}")
+        self._print_verbose_report(case_name, report_stats, logs)
         return logs
+
+    def _print_verbose_report(self, case_name, stats, logs):
+        """
+        Prints a detailed textual summary of the case study results.
+        Includes peak model performance metrics, system bottleneck statistics,
+        and model utilization breakdown.
+        """
+        print(f"\n{'='*60}")
+        print(f"CASE REPORT: {case_name}")
+        print(f"{'='*60}")
+        
+        # Find max correct inf/s model
+        best_throughput = self.models.loc[self.models['correct_infs_per_sec'].idxmax()]
+        # Find max correct inf/J model
+        best_efficiency = self.models.loc[self.models['correct_infs_per_joule'].idxmax()]
+        # Find highest accuracy
+        best_acc = self.models.loc[self.models['acc_decimal'].idxmax()]
+        
+        print(f"MODEL LANDSCAPE:")
+        print(f"  * Highest Throughput: {best_throughput['Model name']:<20} ({best_throughput['correct_infs_per_sec']:.1f} correct inf/s)")
+        print(f"  * Best Efficiency:    {best_efficiency['Model name']:<20} ({best_efficiency['correct_infs_per_joule']:.1f} correct inf/J)")
+        print(f"  * Max Accuracy:       {best_acc['Model name']:<20} ({best_acc['acc_decimal']*100:.1f}%)")
+        print("-" * 60)
+        
+        # simulation Stats
+        total_frames = stats['total_steps']
+        print(f"SIMULATION STATISTICS:")
+        if total_frames > 0:
+            print(f"  * Time Limited Frames:   {stats['time_limited_count']:5d} ({stats['time_limited_count']/total_frames*100:5.1f}%)")
+            print(f"  * Energy Limited Frames: {stats['energy_limited_count']:5d} ({stats['energy_limited_count']/total_frames*100:5.1f}%)")
+            print(f"  * Frames Buffered:       {stats['buffered_count']:5d} ({stats['buffered_count']/total_frames*100:5.1f}%)")
+            print(f"  * Frames Dropped/Missed: {stats['unprocessed_count']:5d} ({stats['unprocessed_count']/total_frames*100:5.1f}%)")
+        print("-" * 60)
+
+        # Utilization Breakdown
+        print(f"MODEL UTILIZATION (% of Active Processing Time):")
+        df_log = pd.DataFrame({'model': logs['model_name']})
+        # Filter out Idle/Recharge/Blocked/Blind to see just compute usage
+        compute_models = df_log[~df_log['model'].isin(['Idle', 'RECHARGE', 'BLOCKED', 'Blind'])]
+        
+        if not compute_models.empty:
+            breakdown = compute_models['model'].value_counts(normalize=True) * 100
+            for name, pct in breakdown.items():
+                print(f"  * {name:<30}: {pct:5.1f}%")
+        else:
+            print("  (No models executed)")
+        print(f"{'='*60}\n")
 
     def _interpolate_orbit(self, df, sunlight_intervals, dt, cfg):
         """
@@ -454,7 +562,7 @@ class ContinuousSatSim:
         ax3 = fig.add_subplot(gs[2], sharex=ax1)
         ax4 = fig.add_subplot(gs[3])
 
-        # Panel 1: Orbit
+        # Orbit
         ax1.plot(t_plot, logs['alt_km'], color='gray', label='Altitude')
         ax1.set_ylabel('Altitude (km)')
         ax1_t = ax1.twinx()
@@ -464,7 +572,7 @@ class ContinuousSatSim:
         ax1.grid(True, alpha=0.3)
         plt.setp(ax1.get_xticklabels(), visible=False)
 
-        # Panel 2: Energy
+        # Energy
         ax2.plot(t_plot, logs['battery_wh'], 'g', label='Dynamic Battery')
         if any(logs['naive_battery_wh']):
             ax2.plot(t_plot, logs['naive_battery_wh'], color='tab:red', linestyle='--', alpha=0.7, label=f'Naive ({self.naive_model_name})')
@@ -480,7 +588,7 @@ class ContinuousSatSim:
         ax2.grid(True, alpha=0.3)
         plt.setp(ax2.get_xticklabels(), visible=False)
 
-        # Panel 3: Performance & Backlog
+        # Performance & Backlog
         ax3.plot(t_plot, logs['cum_correct'], 'k', label='Dynamic Correct')
         if any(logs['naive_cum_correct']):
             ax3.plot(t_plot, logs['naive_cum_correct'], color='tab:red', linestyle='--', label='Naive Correct')
@@ -495,7 +603,7 @@ class ContinuousSatSim:
         ax3_t.tick_params(axis='y', labelcolor='tab:orange')
         ax3.set_xlabel('Time (s)')
 
-        # Panel 4: Utilization
+        # Utilization
         df_log = pd.DataFrame({'model': logs['model_name'], 'infs': logs['throughput_infs']})
         stats = df_log[df_log['infs'] > 0].groupby('model')['infs'].sum().sort_values()
         
@@ -524,26 +632,28 @@ def run_all_case_studies():
     sim_heo = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='HEO', num_orbits=1, naive_model_name='Grid A1.0 D06')
     
     # HEO Cases
-    sim_heo.run_case_study("HEO_01_Standard")
-    sim_heo.run_case_study("HEO_02_PowerCrisis", config_overrides={'initial_charge_pct': 0.25})
+    sim_heo.run_case_study("HEO_01_Standard", config_overrides=ContinuousSatSim.get_heo_config())
     
-    isr_events = [{'start': 20000, 'duration': 600, 'power_w': 120.0/1000.0, 'blocked': True}]
-    sim_heo.run_case_study("HEO_03_ISR_Interruption", events=isr_events)
+    heo_crisis = ContinuousSatSim.get_heo_config()
+    heo_crisis['initial_charge_pct'] = 0.25
+    sim_heo.run_case_study("HEO_02_PowerCrisis", config_overrides=heo_crisis)
+    
+    isr_events = [{'start': 20000, 'duration': 600, 'power_w': 1.5, 'blocked': True}] # 1.5W transmission
+    sim_heo.run_case_study("HEO_03_ISR_Interruption", config_overrides=ContinuousSatSim.get_heo_config(), events=isr_events)
 
     # SSO Cases 
     sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=20, naive_model_name='Grid A1.0 D06')
     
-    # SSO 1: Standard Baseline
-    sim_sso.run_case_study("SSO_01_Standard", config_overrides={'compute_enable_pct': 0.65,'compute_disable_pct': 0.45}) 
+    sso_cfg = ContinuousSatSim.get_sso_config()
+    sim_sso.run_case_study("SSO_01_Standard", config_overrides=sso_cfg)
     
-    # SSO 2: High Data Volume
-    # This simulates a mission requirement to scan larger tiles
-    sim_sso.run_case_study("SSO_02_High_Data_Volume", 
-                        config_overrides={'target_tile_km': 40.0, 'compute_enable_pct': 0.65,'compute_disable_pct': 0.45})
+    sso_vol = sso_cfg.copy()
+    sso_vol['target_tile_km'] = 40.0 
+    sim_sso.run_case_study("SSO_02_High_Data_Volume", config_overrides=sso_vol)
     
-    # SSO 3: Power Degraded State
-    sim_sso.run_case_study("SSO_03_Degraded_Power", 
-                        config_overrides={'solar_generation_mw': 120.0,'compute_enable_pct': 0.65,'compute_disable_pct': 0.45})
+    sso_deg = sso_cfg.copy()
+    sso_deg['solar_generation_mw'] = 400.0  # Solar panels damaged (drop to 400mW)
+    sim_sso.run_case_study("SSO_03_Degraded_Power", config_overrides=sso_deg)
 
 if __name__ == "__main__":
     run_all_case_studies()
