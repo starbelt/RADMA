@@ -15,17 +15,16 @@ These parameters define the satellite's physical hardware and operational constr
 | **Solar Gen** | $P_{solar}$ | `solar_generation_mw` | mW | Max power from solar panels in sunlight. |
 | **Baseload** | $P_{base}$ | `system_baseload_mw` | mW | Idle power (OBC + Radio RX). |
 | **Battery Cap** | $E_{cap}$ | `battery_capacity_wh` | Wh | Total energy storage. |
-| **Target Tile** | $L_{target}$ | `target_tile_km` | km | Size of the ground ROI we want to analyze (e.g., 20x20km). |
-| **TPU Input** | $D_{tpu}$ | `tpu_dim` | px | Dimension of the AI model input (e.g., 224x224). |
+| **Hard Min Limit**| $\gamma_{min}$ | `compute_disable_pct` | % | Hardware shutoff threshold (e.g., 45%). |
+| **Target Tile** | $L_{target}$ | `target_tile_km` | km | Size of the ground ROI (e.g., 20x20km). |
 
 ---
 
 ## 2. Workload Physics: Geometry & Tiling
 
-The workload ($\lambda$) is not static; it is derived dynamically from the satellite's instantaneous altitude and speed. The system calculates how many "Target Tiles" are visible and how many inference patches are required to process them at the current resolution.
+The workload ($\lambda$) is dynamic, derived from the satellite's instantaneous altitude and speed.
 
 ### A. Orbital Geometry
-First, we determine the physical ground coverage.
 * **Ground Velocity ($v_{g}$):** Speed of the ground track relative to the sensor.
 * **Ground Sample Distance ($GSD$):** Physical size of one pixel.
 * **Swath Width ($W$):** Total width of the sensor's footprint.
@@ -33,19 +32,17 @@ First, we determine the physical ground coverage.
 $$GSD(t) = \frac{h(t) \cdot P_{pitch}}{f_{len}}, \quad W(t) = \frac{GSD(t) \cdot R_{sensor}}{1000}$$
 
 ### B. The "Tiling" Logic
-We assume the mission goal is to process specific ROIs (Target Tiles) within the sensor's field of view.
-
-1.  **Dwell Time:** The time available to capture the current scene before the satellite moves one full frame height.
+1.  **Dwell Time:** Time available to capture the current scene.
     $$T_{dwell} = W(t) / v_{g}(t)$$
 
-2.  **Tiles per Frame:** How many $L_{target}$ tiles fit into the current FOV?
+2.  **Tiles per Frame:** Number of target tiles in the current FOV.
     $$N_{tiles} = (W(t) / L_{target})^2$$
 
-3.  **Inferences per Tile:** How many $224 \times 224$ patches are needed to cover one Target Tile at current resolution?
+3.  **Inferences per Tile:** Patches ($224 \times 224$) needed per Target Tile.
     $$I_{tile} = \left( \frac{L_{target} \text{ (in meters)}}{GSD(t) \cdot D_{tpu}} \right)^2$$
 
 ### C. Arrival Rate ($\lambda$)
-The instantaneous demand (Inferences per Second) is the total work per frame divided by the time it takes to pass that frame.
+The instantaneous demand (Inferences per Second).
 
 $$\lambda(t) = \frac{N_{tiles} \cdot I_{tile}}{T_{dwell}}$$
 
@@ -53,68 +50,66 @@ $$\lambda(t) = \frac{N_{tiles} \cdot I_{tile}}{T_{dwell}}$$
 
 ## 3. Buffer Dynamics (FIFO Queue)
 
-The system uses a **First-In-First-Out (FIFO)** queue of `FrameJob` objects to decouple ingestion from processing.
-
-* **Ingestion:** If $\lambda(t) > 1.0$ and $Buffer < B_{max}$, a new `FrameJob` containing $\lambda(t) \cdot \Delta t$ inferences is pushed to the queue.
-* **Overflow:** If $Buffer \ge B_{max}$, the new frame is dropped (simulating data loss).
-* **Processing:** Jobs are popped from the queue and processed by the active model logic.
+* **Ingestion:** If $\lambda(t) > 1.0$ and $Buffer < B_{max}$, a new `FrameJob` is pushed.
+* **Overflow:** If $Buffer \ge B_{max}$, the new frame is dropped.
+* **Processing:** Jobs are popped from the queue based on the **Predictive Control Policy** (Section 5).
 
 ---
 
-## 4. Energy Management & Battery Integration
+## 4. Energy Management: Predictive Waypoint Budgeting
 
-The power system is modeled continuously using Euler integration, governed by a **Hysteresis Latch** to prevent rapid on/off cycling ("chattering") at the threshold.
+Unlike standard hysteresis (on/off) controllers, this system uses a **Predictive Glide Path**. It calculates a dynamic energy budget for every frame to ensure the satellite meets specific State of Charge (SoC) targets at future orbital events (Eclipse Entry/Exit).
 
-### A. The Hysteresis Latch
-Let $S_{charge}$ be the system state ($True$ = Recharging/Idle, $False$ = Active). The state only changes when specific thresholds are crossed:
+### A. Flight Regimes & Targets
+The orbit is divided into segments based on lighting.
 
-$$
-S_{charge}(t+\Delta t) = 
-\begin{cases} 
-\text{True (Stop)} & \text{if } E_{batt} < \gamma_{off} \cdot E_{cap} \\
-\text{False (Start)} & \text{if } E_{batt} > \gamma_{on} \cdot E_{cap} \\
-S_{charge}(t) & \text{otherwise (Maintain State)}
-\end{cases}
-$$
+| Regime | Condition | Target ($E_{target}$) | Goal |
+| :--- | :--- | :--- | :--- |
+| **Sunlight** | $P_{in} > 0$ | $0.95 \cdot E_{cap}$ | Enter eclipse fully charged to maximize survival time. |
+| **Eclipse** | $P_{in} = 0$ | $(\gamma_{min} + 0.05) \cdot E_{cap}$ | Survive darkness without hitting the hard cutoff. |
 
-**Constraint:** Computer processing is strictly forbidden when $S_{charge}$ is True.
+### B. Dynamic Budget Calculation
+At any time $t$, we calculate the max safe energy expenditure ($E_{safe}$) to reach the next target $E_{target}$ at time $t_{event}$.
 
-### B. Power Integration
-The battery state $E_{batt}$ is updated at the end of every time step based on the net power flow.
+1.  **Time Remaining:** $\Delta t_{rem} = t_{event} - t$
+2.  **Required Correction Power:** (Positive = Spend Surplus, Negative = Charge Deficit)
+    $$P_{corr} = \frac{E_{batt}(t) - E_{target}}{\Delta t_{rem}}$$
+3.  **Allowed Power:**
+    $$P_{allowed} = P_{solar}(t) + P_{corr}$$
 
-1.  **Solar Input:** $P_{in}(t) = P_{solar} \cdot \mathbb{I}_{sunlight}(t)$
-2.  **Load:** $P_{load}(t) = P_{base} + P_{compute}(t) + P_{events}(t)$
-3.  **Integration:**
-
+### C. Power Integration
 $$E_{batt}(t+\Delta t) = \text{CLIP} \left( E_{batt}(t) + (P_{in}(t) - P_{load}(t)) \cdot \Delta t, \quad 0, \quad E_{cap} \right)$$
 
 ---
 
-## 5. Dynamic Control Policy (Greedy Optimization)
+## 5. Control Policy (Budget-Constrained Optimization)
 
-When the system is Active ($S_{charge} = False$), it selects an AI model using **Resource-Constrained Greedy Optimization**.
+The system selects an AI model using a modified greedy approach. It maximizes throughput *within* the predictive budget.
 
-At time $t$, with available duration $\Delta t$ and available energy $E_{avail} = E_{batt} - E_{cutoff}$:
+At time $t$, with integration step $\Delta t$:
 
-1.  **Fetch Job:** Peak at the oldest job in the buffer.
-2.  **Evaluate Models:** For every available AI model $M_i$, calculate the maximum work possible ($N_{possible}$) given three strict constraints:
-    * **Time Limit:** $N_{time} = \Delta t / \text{Latency}_i$
-    * **Energy Limit:** $N_{energy} = E_{avail} / \text{EnergyPerInf}_i$
-    * **Job Size:** $N_{job} = \text{RemainingInfs}_{job}$
-    
-    $$N_{possible} = \min(N_{time}, N_{energy}, N_{job})$$
+1.  **Define Constraints:**
+    * **Predictive Budget:** $E_{budget} = \max(0, P_{allowed} \cdot \Delta t)$
+    * **Hard Floor:** $E_{avail} = E_{batt} - (\gamma_{min} \cdot E_{cap})$
+    * **Final Limit:** $E_{limit} = \min(E_{budget}, E_{avail})$
 
-3.  **Score:** Calculate the **Expected Correct Inferences**:
+2.  **Evaluate Models:** For every model $M_i$:
+    * $N_{time} = \Delta t / \text{Latency}_i$
+    * $N_{energy} = E_{limit} / \text{EnergyPerInf}_i$
+    * $N_{possible} = \min(N_{time}, N_{energy}, N_{job})$
+
+3.  **Score & Select:**
     $$\text{Score}_i = N_{possible} \times \text{Accuracy}_i$$
-
-4.  **Select:** Execute the model $M_{best}$ that maximizes the Score.
+    The model maximizing this score is executed. If $E_{limit} \le 0$, the system enters **Recharge/Idle** mode.
 
 ---
 
-## 6. Naive Baseline Logic
+## 6. Naive Baseline Logic (Legacy Hysteresis)
 
 A parallel simulation runs a "dumb" control strategy for comparison.
 
-1.  **Fixed Model:** Always uses a single, pre-selected model (e.g., 'EfficientNet-M').
-2.  **No Lookahead:** It attempts to process for the full duration of $\Delta t$, regardless of queue size (it burns power even if the buffer empties mid-step).
-3.  **Strict Cutoff:** It runs at full power until it hits the $\gamma_{off}$ limit. It does not throttle to save energy; it simply runs until it dies, then waits for the hysteresis reset.
+1.  **Fixed Model:** Always uses a single pre-selected model (e.g., 'EfficientNet-M').
+2.  **Reactive Control:** Uses a simple Hysteresis Latch.
+    * **STOP:** If $E_{batt} < \gamma_{min}$.
+    * **START:** If $E_{batt} > \gamma_{resume}$ (where $\gamma_{resume} \approx 70\%$).
+3.  **No Smoothing:** It runs at full power until it hits the limit, often resulting in "sawtooth" energy profiles and long dead times during eclipses.
