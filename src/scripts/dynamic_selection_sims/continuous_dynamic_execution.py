@@ -27,12 +27,12 @@ class FrameJob:
 
 class ContinuousSatSim:
     DEFAULT_SYSTEM = {
-        'focal_length_mm': 300.0,
+        'focal_length_mm': 500.0,
         'pixel_pitch_um': 3.45,
         'sensor_res': 4096,
-        'target_tile_km': 10.0,
+        'target_tile_km': 20.0,
         'tpu_dim': 224,
-        'min_pixels': 5,
+        'min_pixels': 1,
         
         'battery_capacity_wh': 1.1,
         'solar_generation_mw': 200.0,
@@ -202,6 +202,7 @@ class ContinuousSatSim:
         
         t_start = sim_data['Time (EpSec)'].iloc[0]
         total_infs_processed = 0
+        total_infs_correct = 0
 
         for i, row in sim_data.iterrows():
             t_rel = row['Time (EpSec)'] - t_start
@@ -314,6 +315,7 @@ class ContinuousSatSim:
             env_energy_j = (solar_w - base_w) * dt # Note: Base load subtracted from battery here
             current_battery_j = np.clip(current_battery_j + env_energy_j, 0, BATTERY_CAPACITY_J)
             total_infs_processed += processed_infs_step
+            total_infs_correct+= processed_infs_step*current_accuracy
             
             # Calculate Total Backlog
             buffer_backlog = sum(j.remaining_inferences for j in frame_buffer)
@@ -333,7 +335,7 @@ class ContinuousSatSim:
             logs['speed_km_s'].append(row['v_ground_km_s'])
 
         self._plot_telemetry(logs, case_name, cfg)
-        print(f"[{case_name}] Complete. Total Inferences: {total_infs_processed:,.0f}")
+        print(f"[{case_name}] Complete. Total Correct Inferences: {total_infs_correct:,.0f}")
         return logs
 
     def _interpolate_orbit(self, df, sunlight_intervals, dt, cfg):
@@ -385,12 +387,12 @@ class ContinuousSatSim:
     def _plot_telemetry(self, logs, case_name, cfg):
         t_plot = np.array(logs['time_rel'])
         
-        # 1. Setup Figure (Disable Global sharex)
+        # Setup Figure (Disable Global sharex)
         fig = plt.figure(figsize=(12, 16))
         gs = fig.add_gridspec(4, 1, height_ratios=[1, 1.5, 1.5, 1])
         fig.suptitle(f"Case Study: {case_name}", fontsize=16)
 
-        # 2. Create Axes
+        # Create Axes
         # ax1 is the master X-axis for time plots
         ax1 = fig.add_subplot(gs[0])
         # ax2 and ax3 share X with ax1
@@ -399,7 +401,7 @@ class ContinuousSatSim:
         # ax4 is independent (Bar chart)
         ax4 = fig.add_subplot(gs[3])
 
-        # Plot 1: Orbit
+        # Orbit
         ax1.plot(t_plot, logs['alt_km'], color='gray', label='Altitude')
         ax1.set_ylabel('Altitude (km)')
         ax1_t = ax1.twinx()
@@ -409,7 +411,7 @@ class ContinuousSatSim:
         ax1.grid(True, alpha=0.3)
         plt.setp(ax1.get_xticklabels(), visible=False) # Hide x-labels
 
-        # Plot 2: Energy
+        # Energy
         ax2.plot(t_plot, logs['battery_wh'], 'g', label='Battery')
         ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='r', linestyle=':', label='Crit')
         ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='g', linestyle=':', label='Resume')
@@ -423,7 +425,7 @@ class ContinuousSatSim:
         ax2.grid(True, alpha=0.3)
         plt.setp(ax2.get_xticklabels(), visible=False) # Hide x-labels
 
-        # Plot 3: Buffer & Demand
+        # Buffer & Demand
         backlog = np.array(logs['backlog_infs'])
         ax3.fill_between(t_plot, backlog, color='tab:orange', alpha=0.3, label='Backlog')
         ax3.plot(t_plot, backlog, color='tab:orange', label='Backlog Count')
@@ -440,7 +442,7 @@ class ContinuousSatSim:
         ax3_t.legend(loc='upper right')
         ax3.grid(True, alpha=0.3)
 
-        # Plot 4: Model Usage (Bar Chart - Independent Axis)
+        # Model Usage (Bar Chart - Independent Axis)
         df_log = pd.DataFrame({'model': logs['model_name'], 'infs': logs['throughput_infs']})
         stats = df_log[df_log['infs'] > 0].groupby('model')['infs'].sum().sort_values()
         
@@ -462,34 +464,35 @@ class ContinuousSatSim:
         plt.close()
         
 def run_all_case_studies():
-    model_json = ROOT_DIR / "libs/coral_tpu_characterization/data/compiled_characterization.json" 
-    orbit_path = ROOT_DIR / "libs/coral_tpu_characterization/data/stk"
+    # model_json = ROOT_DIR / "libs/coral_tpu_characterization/data/compiled_characterization.json" 
+    # orbit_path = ROOT_DIR / "libs/coral_tpu_characterization/data/stk"
+    model_json = ROOT_DIR / "data/compiled_characterization.json" 
+    orbit_path = ROOT_DIR / "data/stk"
     out_dir = ROOT_DIR / "results/case_studies"
 
-    # --- HEO Setup ---
-    sim_heo = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='HEO', num_orbits=1)
+    # # --- HEO Setup ---
+    # sim_heo = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='HEO', num_orbits=1)
     
-    # Case 1: HEO Standard
-    sim_heo.run_case_study("HEO_01_Standard")
+    # # HEO Standard
+    # sim_heo.run_case_study("HEO_01_Standard")
     
-    # Case 2: HEO with Power Crisis (Start low battery + Eclipse)
-    sim_heo.run_case_study("HEO_02_PowerCrisis", config_overrides={'initial_charge_pct': 0.25})
+    # # HEO with Start low battery 
+    # sim_heo.run_case_study("HEO_02_PowerCrisis", config_overrides={'initial_charge_pct': 0.25})
 
-    # Case 3: HEO with "ISR" Interruption at Perigee
-    # Assuming Perigee happens around t=1000s to 3000s in this specific orbit
-    isr_events = [{
-        'start': 2000, 'duration': 600,  # 10 minute interruption
-        'power_w': 120.0,                # High power draw
-        'blocked': True                  # TPU unavailable (taking pics)
-    }]
-    sim_heo.run_case_study("HEO_03_ISR_Interruption", events=isr_events)
+    # # HEO with Interruption at Perigee
+    # # Assuming Perigee happens around t=1000s to 3000s in this specific orbit
+    # isr_events = [{
+    #     'start': 20000, 'duration': 600,  # 10 minute interruption
+    #     'power_w': 120.0/1000.0,          # High power draw
+    #     'blocked': True                  # TPU unavailable (taking pics)
+    # }]
+    # sim_heo.run_case_study("HEO_03_ISR_Interruption", events=isr_events)
 
-    # --- SSO Setup ---
-    # Will gracefully fail inside class if files don't exist
-    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=1)
+
+    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=20)
     
     # Case 4: SSO Standard (High Duty Cycle)
-    sim_sso.run_case_study("SSO_01_Standard", config_overrides={'battery_capacity_wh': 2.5}) # SSO usually needs bigger battery
+    sim_sso.run_case_study("SSO_01_Standard", config_overrides={'compute_enable_pct': 0.65,'compute_disable_pct': 0.45,}) 
 
 if __name__ == "__main__":
     run_all_case_studies()
