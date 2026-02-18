@@ -1,136 +1,120 @@
 # Satellite Edge Computing: Continuous Simulation Logic
 
-This document outlines the mathematical models and control logic used in the updated `ContinuousSatSim` Python class. The simulation transitions from discrete "dwell-based" steps to a continuous time-integration model ($\Delta t$), introducing a **Workload Queue (Buffer)** to decouple data acquisition from processing.
+This document outlines the mathematical models and control logic used in the `ContinuousSatSim` Python class. The simulation uses a continuous time-integration model ($\Delta t$) to track orbital mechanics, energy balance, and queue-based workload processing.
 
 ---
 
 ## 1. System Configuration & Constants
 
-These parameters define the sensor capabilities, system constraints, and the simulation time step.
+These parameters define the satellite's physical hardware and operational constraints.
 
 | Parameter | Symbol | Script Variable | Unit | Description |
 | :--- | :---: | :--- | :--- | :--- |
 | **Sim Time Step** | $\Delta t$ | `sim_dt_s` | s | Integration step size (default 1.0s). |
-| **Buffer Capacity** | $B_{max}$ | `buffer_max_images` | Frames | Maximum size of the input queue before data is dropped. |
-| **Solar Generation** | $P_{solar}$ | `solar_generation_mw` | mW | Max power from solar panels in sunlight. |
-| **Baseload Power** | $P_{base}$ | `system_baseload_mw` | mW | Idle power (MCU + Radio RX) required to stay alive. |
-| **Battery Capacity** | $E_{cap}$ | `battery_capacity_wh` | Wh | Total energy storage. |
-| **Critical Threshold** | $\gamma_{crit}$ | `0.05` | % | Battery level triggering emergency power saving. |
+| **Buffer Capacity** | $B_{max}$ | `buffer_max_frames` | Frames | Max queue size before new data is dropped. |
+| **Solar Gen** | $P_{solar}$ | `solar_generation_mw` | mW | Max power from solar panels in sunlight. |
+| **Baseload** | $P_{base}$ | `system_baseload_mw` | mW | Idle power (OBC + Radio RX). |
+| **Battery Cap** | $E_{cap}$ | `battery_capacity_wh` | Wh | Total energy storage. |
+| **Target Tile** | $L_{target}$ | `target_tile_km` | km | Size of the ground ROI we want to analyze (e.g., 20x20km). |
+| **TPU Input** | $D_{tpu}$ | `tpu_dim` | px | Dimension of the AI model input (e.g., 224x224). |
 
 ---
 
-## 2. Orbital Geometry & Workload Arrival
+## 2. Workload Physics: Geometry & Tiling
 
-Unlike the previous logic which calculated total demand per "ground patch," this model calculates an instantaneous **Arrival Rate** ($\lambda$) of work.
+The workload ($\lambda$) is not static; it is derived dynamically from the satellite's instantaneous altitude and speed. The system calculates how many "Target Tiles" are visible and how many inference patches are required to process them at the current resolution.
 
-### A. Ground Velocity & Swath
-We determine the instantaneous velocity of the ground track relative to the sensor and the sensor's physical coverage width.
+### A. Orbital Geometry
+First, we determine the physical ground coverage.
+* **Ground Velocity ($v_{g}$):** Speed of the ground track relative to the sensor.
+* **Ground Sample Distance ($GSD$):** Physical size of one pixel.
+* **Swath Width ($W$):** Total width of the sensor's footprint.
 
-$$v_{ground}(t) = ||\vec{v}_{sat} - \text{proj}_{\vec{r}}(\vec{v}_{sat})||$$
-*(The magnitude of the velocity vector projected onto the plane perpendicular to the nadir vector)*
+$$GSD(t) = \frac{h(t) \cdot P_{pitch}}{f_{len}}, \quad W(t) = \frac{GSD(t) \cdot R_{sensor}}{1000}$$
 
-The **Swath Width** ($W$) at altitude $h(t)$:
+### B. The "Tiling" Logic
+We assume the mission goal is to process specific ROIs (Target Tiles) within the sensor's field of view.
 
-$$W(t) = \frac{h(t) \cdot P_{pitch}}{f_{len}} \cdot R_{sensor}$$
+1.  **Dwell Time:** The time available to capture the current scene before the satellite moves one full frame height.
+    $$T_{dwell} = W(t) / v_{g}(t)$$
 
-### B. Workload Arrival Rate ($\lambda$)
-The rate at which new imagery (and thus inference demand) enters the system depends on how fast we sweep new area.
+2.  **Tiles per Frame:** How many $L_{target}$ tiles fit into the current FOV?
+    $$N_{tiles} = (W(t) / L_{target})^2$$
 
-1. **Area Rate:** $\dot{A}(t) = W(t) \cdot v_{ground}(t)$
-2. **Tiles per Second:** $\dot{T}(t) = \frac{\dot{A}(t)}{L_{target}^2}$
-3. **Inferences per Tile:** $I_{tile}$ (Function of Ground Sample Distance vs TPU Input Dim).
+3.  **Inferences per Tile:** How many $224 \times 224$ patches are needed to cover one Target Tile at current resolution?
+    $$I_{tile} = \left( \frac{L_{target} \text{ (in meters)}}{GSD(t) \cdot D_{tpu}} \right)^2$$
 
-The **Arrival Rate** (Inferences per second) is:
-$$\lambda(t) = \dot{T}(t) \cdot I_{tile}(t)$$
+### C. Arrival Rate ($\lambda$)
+The instantaneous demand (Inferences per Second) is the total work per frame divided by the time it takes to pass that frame.
 
----
-
-## 3. Buffer Dynamics (Queue Theory)
-
-The system now implements a First-In-First-Out (FIFO) queue. Work arrives at rate $\lambda(t)$ and is processed at service rate $\mu(t)$.
-
-### A. Queue Evolution
-For a time step $\Delta t$:
-
-$$Work_{in} = \lambda(t) \cdot \Delta t$$
-
-The buffer state $B$ (in frames/inferences) evolves as:
-
-$$B(t+\Delta t) = \min \left( B(t) + Work_{in} - Work_{processed}, \quad B_{max} \right)$$
-
-*Note: If $B(t) + Work_{in} > B_{max}$, the excess work is dropped (Overflow).*
+$$\lambda(t) = \frac{N_{tiles} \cdot I_{tile}}{T_{dwell}}$$
 
 ---
 
-## 4. Energy Model & Events
+## 3. Buffer Dynamics (FIFO Queue)
 
-Energy is integrated continuously. We now handle binary lighting (Sunlight/Eclipse) and external power events.
+The system uses a **First-In-First-Out (FIFO)** queue of `FrameJob` objects to decouple ingestion from processing.
 
-### A. Solar Input (Binary)
-Using STK lighting intervals, the solar factor $S(t)$ is binary:
+* **Ingestion:** If $\lambda(t) > 1.0$ and $Buffer < B_{max}$, a new `FrameJob` containing $\lambda(t) \cdot \Delta t$ inferences is pushed to the queue.
+* **Overflow:** If $Buffer \ge B_{max}$, the new frame is dropped (simulating data loss).
+* **Processing:** Jobs are popped from the queue and processed by the active model logic.
+
+---
+
+## 4. Energy Management & Battery Integration
+
+The power system is modeled continuously using Euler integration, governed by a **Hysteresis Latch** to prevent rapid on/off cycling ("chattering") at the threshold.
+
+### A. The Hysteresis Latch
+Let $S_{charge}$ be the system state ($True$ = Recharging/Idle, $False$ = Active). The state only changes when specific thresholds are crossed:
+
 $$
-S(t) = 
+S_{charge}(t+\Delta t) = 
 \begin{cases} 
-1 & \text{if } t \in \text{Sunlight Intervals} \\
-0 & \text{otherwise (Eclipse/Umbra)}
+\text{True (Stop)} & \text{if } E_{batt} < \gamma_{off} \cdot E_{cap} \\
+\text{False (Start)} & \text{if } E_{batt} > \gamma_{on} \cdot E_{cap} \\
+S_{charge}(t) & \text{otherwise (Maintain State)}
 \end{cases}
 $$
 
-$$P_{in}(t) = P_{solar} \cdot S(t)$$
+**Constraint:** Computer processing is strictly forbidden when $S_{charge}$ is True.
 
-### B. Power Consumption & Disturbances
-The total load includes baseload, dynamic processing power, and external events (e.g., Radio TX).
+### B. Power Integration
+The battery state $E_{batt}$ is updated at the end of every time step based on the net power flow.
 
-$$P_{load}(t) = P_{base} + P_{processing}(t) + P_{event}(t)$$
-
-**Event Logic:**
-If an external event $E$ is active at time $t$:
-* $P_{event}(t) = E_{power}$
-* **CPU Block:** If $E_{blocked} = \text{True}$, then processing is halted ($\mu(t) = 0$).
-
----
-
-## 5. Control Policy (State Machine)
-
-Instead of optimizing every step, the satellite uses a robust **Priority-Based State Machine** to select the active AI Model.
-
-**Available Models:**
-* **Fast Model:** High Throughput ($\mu_{fast}$), High Power.
-* **Eco Model:** High Efficiency ($\eta_{eco}$), Lower Power.
-
-### State Selection Logic
-
-At each time step $t$, the system evaluates conditions in this specific order:
-
-1.  **Hardware Interlock:**
-    * IF `CPU_Blocked` (Event active): $\rightarrow$ **State: BLOCKED** (No processing).
-
-2.  **Safety Limits:**
-    * IF $E_{batt} \le 0$: $\rightarrow$ **State: DEAD** (System crash).
-    * IF $E_{batt} < \gamma_{crit}$:
-        * IF $B(t) > 0.9 \cdot B_{max}$ (Buffer nearly overflowing): $\rightarrow$ **State: CRIT_DRAIN** (Use Eco Model to clear space).
-        * ELSE: $\rightarrow$ **State: RECHARGE** (Idle to recover energy).
-
-3.  **Buffer Management (Nominal Ops):**
-    * IF $B(t) > 0.4 \cdot B_{max}$: $\rightarrow$ **State: FAST** (Use Fast Model to drain queue).
-    * IF $B(t) > 0$: $\rightarrow$ **State: ECO** (Use Efficient Model to process steady state).
-    * ELSE: $\rightarrow$ **State: IDLE** (Buffer empty, save power).
-
-### Processing & Physics Update
-Once a model $M$ is selected, the **Service Rate** ($\mu$) is:
-$$\mu(t) = \frac{1}{\text{Latency}_M}$$
-
-**Work Done:**
-$$Work_{processed} = \min \left( B(t), \quad \mu(t) \cdot \Delta t \right)$$
-
-**Energy Consumed:**
-$$E_{consumed} = Work_{processed} \cdot \text{EnergyPerInf}_M$$
-$$P_{processing} = \frac{E_{consumed}}{\Delta t}$$
-
----
-
-## 6. Battery Integration
-
-The battery state is updated using Euler integration:
+1.  **Solar Input:** $P_{in}(t) = P_{solar} \cdot \mathbb{I}_{sunlight}(t)$
+2.  **Load:** $P_{load}(t) = P_{base} + P_{compute}(t) + P_{events}(t)$
+3.  **Integration:**
 
 $$E_{batt}(t+\Delta t) = \text{CLIP} \left( E_{batt}(t) + (P_{in}(t) - P_{load}(t)) \cdot \Delta t, \quad 0, \quad E_{cap} \right)$$
+
+---
+
+## 5. Dynamic Control Policy (Greedy Optimization)
+
+When the system is Active ($S_{charge} = False$), it selects an AI model using **Resource-Constrained Greedy Optimization**.
+
+At time $t$, with available duration $\Delta t$ and available energy $E_{avail} = E_{batt} - E_{cutoff}$:
+
+1.  **Fetch Job:** Peak at the oldest job in the buffer.
+2.  **Evaluate Models:** For every available AI model $M_i$, calculate the maximum work possible ($N_{possible}$) given three strict constraints:
+    * **Time Limit:** $N_{time} = \Delta t / \text{Latency}_i$
+    * **Energy Limit:** $N_{energy} = E_{avail} / \text{EnergyPerInf}_i$
+    * **Job Size:** $N_{job} = \text{RemainingInfs}_{job}$
+    
+    $$N_{possible} = \min(N_{time}, N_{energy}, N_{job})$$
+
+3.  **Score:** Calculate the **Expected Correct Inferences**:
+    $$\text{Score}_i = N_{possible} \times \text{Accuracy}_i$$
+
+4.  **Select:** Execute the model $M_{best}$ that maximizes the Score.
+
+---
+
+## 6. Naive Baseline Logic
+
+A parallel simulation runs a "dumb" control strategy for comparison.
+
+1.  **Fixed Model:** Always uses a single, pre-selected model (e.g., 'EfficientNet-M').
+2.  **No Lookahead:** It attempts to process for the full duration of $\Delta t$, regardless of queue size (it burns power even if the buffer empties mid-step).
+3.  **Strict Cutoff:** It runs at full power until it hits the $\gamma_{off}$ limit. It does not throttle to save energy; it simply runs until it dies, then waits for the hysteresis reset.
