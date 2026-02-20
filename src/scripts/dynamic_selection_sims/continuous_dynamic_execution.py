@@ -125,41 +125,44 @@ class ContinuousSatSim:
         'pixel_pitch_um': 3.45,
         'sensor_res': 4096,
         'tpu_dim': 224,
-        'min_pixels': 10,
         'system_baseload_mw': 300.0,
         'sim_dt_s': 1.0,
         
-        # Power Management Logic
+        # dual regime sensing defaults
+        'alt_threshold_km': 4000.0,
+        'low_alt_target_km': 20.0,
+        'low_alt_min_px': 50,
+        'high_alt_target_km': 75.0, # look for massive features at apogee
+        'high_alt_min_px': 2,        # accept heavily pixelated data
+        
+        # power management
         'initial_charge_pct': 0.85,
-        'compute_enable_pct': 0.70,   # Used for plotting reference only now
-        'compute_disable_pct': 0.45,  # Used as hard floor
+        'compute_enable_pct': 0.70,
+        'compute_disable_pct': 0.45,
     }
 
     @staticmethod
     def get_heo_config():
-        """
-        HEO Configuration: Optimized for long-range observation.
-        """
+        # heo config: swap from micro to macro tracking at 5000km
         cfg = ContinuousSatSim.BASE_SYSTEM.copy()
         cfg.update({
             'focal_length_mm': 300.0,
-            'target_tile_km': 50.0,
-            'battery_capacity_wh': 1.0,
-            'solar_generation_mw': 500.0,
-            'buffer_max_frames': 200,
+            'battery_capacity_wh': 2.0,
+            'solar_generation_mw': 800.0,
+            'buffer_max_frames': 1000,
+            'alt_threshold_km': 5000.0,
+            'high_alt_target_km': 75.0,
+            'high_alt_min_px': 2,
         })
         return cfg
 
     @staticmethod
     def get_sso_config():
-        """
-        SSO Configuration: Optimized for high-speed mapping.
-        """
+        # sso config: altitude never crosses threshold, so it stays in low alt mode
         cfg = ContinuousSatSim.BASE_SYSTEM.copy()
         cfg.update({
             'focal_length_mm': 85.0,
-            'target_tile_km': 20.0,
-            'battery_capacity_wh': 1.5,  # less than a 18650 cell, more than the supercap
+            'battery_capacity_wh': 1.5,
             'solar_generation_mw': 500.0,
             'buffer_max_frames': 500,
         })
@@ -436,13 +439,15 @@ class ContinuousSatSim:
             env_energy_j = (solar_w - base_w) * dt 
             infs_for_this_second = row['demand_infs_per_sec'] * dt
             
-            # Populate Buffers & Track Frame Stats
+            # populate buffers & track frame stats
             buffered_this_step = False
-            if row['px_per_object'] < cfg['min_pixels']:
-                active_model_name = "Blind" 
+            
+            # if demand is zero, physics engine determined data is unusable
+            if infs_for_this_second <= 0.0:
+                active_model_name = "blind" 
                 report_stats['unprocessed_count'] += 1 
             else:
-                active_model_name = "Idle"
+                active_model_name = "idle"
                 if infs_for_this_second > 1.0: 
                     if len(frame_buffer) < cfg['buffer_max_frames']:
                         frame_buffer.append(FrameJob(i, infs_for_this_second, t_rel))
@@ -450,7 +455,7 @@ class ContinuousSatSim:
                         if naive_model is not None:
                             n_buffer.append(FrameJob(i, infs_for_this_second, t_rel))
                     else:
-                        report_stats['unprocessed_count'] += 1 # Buffer overflow drop
+                        report_stats['unprocessed_count'] += 1 # buffer overflow drop
             
             if buffered_this_step and len(frame_buffer) > 1:
                  report_stats['buffered_count'] += 1
@@ -614,7 +619,7 @@ class ContinuousSatSim:
         print("-" * 60)
         
         # calc tiles per frame
-        tiles_per_frame = (sim_data['swath_km'] / cfg['target_tile_km'])**2
+        tiles_per_frame = (sim_data['swath_km'] / sim_data['current_target_km'])**2
 
         # print new figures of merit (min / max)
         print("figures of merit (min / max):")
@@ -650,9 +655,7 @@ class ContinuousSatSim:
         print(f"{'='*60}\n")
 
     def _interpolate_orbit(self, df, sunlight_intervals, dt, cfg):
-        """
-        Interpolates the variable-step orbit data to a fixed time step (dt).
-        """
+        # interpolates orbit data and calculates dynamic physics
         if df.empty: return pd.DataFrame()
         
         t_start = df['Time (EpSec)'].min()
@@ -683,15 +686,24 @@ class ContinuousSatSim:
         new_df['v_ground_km_s'] = v_ground
         new_df['dwell_time_s'] = new_df['swath_km'] / (v_ground + 1e-9)
 
-        target_size_m = cfg['target_tile_km'] * 1000.0
+        # dual regime logic based on altitude
+        is_low_alt = new_df['Alt (km)'] <= cfg['alt_threshold_km']
+        
+        target_size_km = np.where(is_low_alt, cfg['low_alt_target_km'], cfg['high_alt_target_km'])
+        min_px = np.where(is_low_alt, cfg['low_alt_min_px'], cfg['high_alt_min_px'])
+        
+        target_size_m = target_size_km * 1000.0
         new_df['px_per_object'] = target_size_m / new_df['gsd_m']
         
         tpu_dim = cfg['tpu_dim']
-        infs_per_object = np.where(new_df['px_per_object'] < cfg['min_pixels'], 0.0, (new_df['px_per_object'] / tpu_dim)**2)
+        infs_per_object = np.where(new_df['px_per_object'] < min_px, 0.0, (new_df['px_per_object'] / tpu_dim)**2)
         
-        objects_in_fov = (new_df['swath_km'] / cfg['target_tile_km'])**2
+        objects_in_fov = (new_df['swath_km'] / target_size_km)**2
         total_infs_per_frame = objects_in_fov * infs_per_object
         new_df['demand_infs_per_sec'] = total_infs_per_frame / new_df['dwell_time_s']
+        
+        # save this for the reporting tool so it doesn't crash on the dynamic config
+        new_df['current_target_km'] = target_size_km
         
         return new_df
 
