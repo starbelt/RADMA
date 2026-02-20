@@ -17,7 +17,6 @@ try:
 except ImportError:
     ROOT_DIR = Path(".").resolve()
 
-# --- Data Structures ---
 
 class FlightRegime(Enum):
     SUNLIGHT = 1
@@ -44,75 +43,45 @@ class PowerManager:
     """
     Predictive Energy Budget Controller.
     Calculates the maximum safe energy expenditure per frame to ensure
-    the satellite meets specific State of Charge (SoC) waypoints 
-    (e.g., entering eclipse full, exiting eclipse alive).
+    the satellite meets specific State of Charge (SoC) waypoints.
     """
     def __init__(self, battery_capacity_j, hysteresis_conf, events):
-        """
-        hysteresis_conf: dict with 'compute_disable_pct'
-        events: list of OrbitalEvent (sorted)
-        """
         self.capacity_j = battery_capacity_j
         self.events = events 
         self.current_event_idx = 0
         
-        # --- CONSTANTS ---
         # Target: Enter eclipse fully charged (95%) to maximize survival time
         self.TARGET_ECLIPSE_ENTRY_SOC = 0.95 
         
         # Target: Exit eclipse slightly ABOVE the disable limit. 
-        # If disable is 45%, we target 50% so we can work immediately upon sunrise.
         self.TARGET_ECLIPSE_EXIT_SOC = hysteresis_conf['compute_disable_pct'] + 0.05
 
     def _get_current_event(self, t_now):
-        # Fast-forward to correct event if time has passed
         while (self.current_event_idx < len(self.events) and 
                t_now > self.events[self.current_event_idx].time_end):
             self.current_event_idx += 1
             
         if self.current_event_idx >= len(self.events):
-            return None # End of simulation schedule
+            return None
         return self.events[self.current_event_idx]
 
     def get_allowed_budget(self, t_now, current_battery_j, solar_input_w, dt):
-        """
-        Returns the max Joules we can spend this frame (dt) while strictly
-        adhering to the glide path for the next event.
-        """
         event = self._get_current_event(t_now)
-        # If no schedule exists (e.g. simulation ran past orbit data), default to safe mode (0 budget)
-        if not event: return 0.0 
+        if not event: return solar_input_w * dt 
 
         time_remaining = event.time_end - t_now
-        if time_remaining <= 1e-3: time_remaining = dt # Prevent div/0
+        if time_remaining <= 1e-3: time_remaining = dt
 
-        # --- DETERMINE TARGET STATE ---
         if event.regime == FlightRegime.SUNLIGHT:
-            # We are in sun, preparing for eclipse
             target_j = self.capacity_j * self.TARGET_ECLIPSE_ENTRY_SOC
         else:
-            # We are in eclipse, preparing for sunrise
             target_j = self.capacity_j * self.TARGET_ECLIPSE_EXIT_SOC
 
-        # --- CALCULATE GLIDE PATH ---
-        # Current Deviation from Target
         energy_diff_j = current_battery_j - target_j
-        
-        # Slope: How many Watts (J/s) do we need to burn/save to hit 0 diff at t_end?
-        # If energy_diff is positive (we have extra), this yields positive power to spend.
-        # If energy_diff is negative (we are behind), this yields negative power (must charge).
         correction_power_w = energy_diff_j / time_remaining
-
-        # Total Allowed Spend = Solar Input + Battery Correction
-        # In Eclipse: Solar is 0, so we just drain the battery at the calculated safe rate.
-        # In Sun: We spend solar + whatever excess battery we have (or minus what we need to save).
         total_allowed_w = solar_input_w + correction_power_w
 
-        # Clamp results
-        # Never return < 0 (can't un-spend energy)
-        allowed_joules = max(0.0, total_allowed_w * dt)
-        
-        return allowed_joules
+        return max(0.0, total_allowed_w * dt)
 
 class ContinuousSatSim:
     """
@@ -129,11 +98,11 @@ class ContinuousSatSim:
         'sim_dt_s': 1.0,
         
         # dual regime sensing defaults
-        'alt_threshold_km': 4000.0,
-        'low_alt_target_km': 20.0,
-        'low_alt_min_px': 50,
-        'high_alt_target_km': 75.0, # look for massive features at apogee
-        'high_alt_min_px': 2,        # accept heavily pixelated data
+        'alt_threshold_km': 2000.0,
+        'low_alt_target_km': 1.0,
+        'low_alt_min_px': 5,
+        'high_alt_target_km': 200.0, 
+        'high_alt_min_px': 2,        
         
         # power management
         'initial_charge_pct': 0.85,
@@ -143,36 +112,34 @@ class ContinuousSatSim:
 
     @staticmethod
     def get_heo_config():
-        # heo config: swap from micro to macro tracking at 5000km
+        # HEO: Time-domain focus. Massive target resolution swing, sufficient power.
         cfg = ContinuousSatSim.BASE_SYSTEM.copy()
         cfg.update({
             'focal_length_mm': 300.0,
             'battery_capacity_wh': 2.0,
-            'solar_generation_mw': 800.0,
-            'buffer_max_frames': 1000,
-            'alt_threshold_km': 5000.0,
-            'high_alt_target_km': 75.0,
-            'high_alt_min_px': 2,
+            'solar_generation_mw': 1500.0, 
+            'alt_threshold_km': 5000.0,    
+            'low_alt_target_km': 0.5,      
+            'buffer_max_frames': 25000     
         })
         return cfg
 
     @staticmethod
     def get_sso_config():
-        # sso config: altitude never crosses threshold, so it stays in low alt mode
+        # SSO: Power-domain focus. Low solar overhead, frequent eclipses.
         cfg = ContinuousSatSim.BASE_SYSTEM.copy()
         cfg.update({
             'focal_length_mm': 85.0,
             'battery_capacity_wh': 1.5,
-            'solar_generation_mw': 500.0,
-            'buffer_max_frames': 500,
+            'solar_generation_mw': 1300.0, 
+            'buffer_max_frames': 5000,
         })
         return cfg
 
-    def __init__(self, orbit_data_path, model_json_path, output_dir, sat_prefix='HEO', num_orbits=1, model_source='Custom', naive_model_name=None):
+    def __init__(self, orbit_data_path, model_json_path, output_dir, sat_prefix='HEO', num_orbits=1, model_source='Custom'):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.sat_prefix = sat_prefix
-        self.naive_model_name = naive_model_name
         
         print(f"--- Loading Models (Source={model_source}) & Orbit Data for {sat_prefix} ---")
         self.models = self._load_models(model_json_path, model_source)
@@ -191,7 +158,6 @@ class ContinuousSatSim:
         df['lat_s'] = df['Measured Inference Time (ms)'] / 1000.0
         df['eng_j'] = df['Energy per Inference (mJ)'] / 1000.0
         
-        # Precompute Correct Inferences Per Second/Joule for report
         df['correct_infs_per_sec'] = (1.0 / df['lat_s']) * df['acc_decimal']
         df['correct_infs_per_joule'] = (1.0 / df['eng_j']) * df['acc_decimal']
         
@@ -204,7 +170,7 @@ class ContinuousSatSim:
         l_path = root / f'{self.sat_prefix}_Sat_LLA_Position.csv'
         
         if not p_path.exists() or not c_path.exists() or not l_path.exists():
-            print(f"[WARN] Missing STK Files for {self.sat_prefix}. Simulation will be skipped.")
+            print(f"[WARN] Missing STK Files for {self.sat_prefix}. Simulation skipped.")
             return pd.DataFrame(), []
 
         v = pd.read_csv(p_path)
@@ -222,9 +188,7 @@ class ContinuousSatSim:
             print(f"[ERROR] Merge failed for {self.sat_prefix}: {e}")
             return pd.DataFrame(), []
 
-        if df.empty:
-            print(f"[WARN] Orbit data for {self.sat_prefix} resulted in empty DataFrame.")
-            return pd.DataFrame(), []
+        if df.empty: return pd.DataFrame(), []
         
         if 'True Anomaly (deg)' in df.columns:
             ta = df['True Anomaly (deg)'].values
@@ -246,9 +210,6 @@ class ContinuousSatSim:
         return df, sunlight_intervals
 
     def _parse_lighting_schedule(self, file_path):
-        """
-        Parses the specific text format of STK Lighting Times reports.
-        """
         intervals = []
         with open(file_path, 'r') as f:
             lines = f.readlines()
@@ -272,60 +233,33 @@ class ContinuousSatSim:
         return intervals
 
     def _build_event_schedule(self, t_start_abs, t_end_abs, sunlight_intervals):
-        """
-        Converts absolute sunlight intervals into a relative-time event schedule 
-        (Sunlight vs Eclipse segments) for the PowerManager.
-        """
         events = []
         current_t = t_start_abs
-        
-        # Sort intervals just in case
         sorted_intervals = sorted(sunlight_intervals, key=lambda x: x[0])
 
         for (sun_start, sun_end) in sorted_intervals:
-            # Check if there is an eclipse gap before this sun period
             if sun_start > current_t:
-                # ECLIPSE SEGMENT
-                # Clamp start to simulation start
                 start_seg = max(current_t, t_start_abs)
                 end_seg = min(sun_start, t_end_abs)
                 if end_seg > start_seg:
-                    events.append(OrbitalEvent(
-                        start_seg - t_start_abs, 
-                        end_seg - t_start_abs, 
-                        FlightRegime.ECLIPSE
-                    ))
+                    events.append(OrbitalEvent(start_seg - t_start_abs, end_seg - t_start_abs, FlightRegime.ECLIPSE))
             
-            # SUNLIGHT SEGMENT
             start_seg = max(sun_start, t_start_abs)
             end_seg = min(sun_end, t_end_abs)
             
-            # Break if we've passed the simulation end
             if start_seg >= t_end_abs: break
             
             if end_seg > start_seg:
-                events.append(OrbitalEvent(
-                    start_seg - t_start_abs, 
-                    end_seg - t_start_abs, 
-                    FlightRegime.SUNLIGHT
-                ))
+                events.append(OrbitalEvent(start_seg - t_start_abs, end_seg - t_start_abs, FlightRegime.SUNLIGHT))
             
             current_t = max(current_t, end_seg)
             
-        # Check if there is trailing eclipse after last sun
         if current_t < t_end_abs:
-             events.append(OrbitalEvent(
-                current_t - t_start_abs, 
-                t_end_abs - t_start_abs, 
-                FlightRegime.ECLIPSE
-            ))
+             events.append(OrbitalEvent(current_t - t_start_abs, t_end_abs - t_start_abs, FlightRegime.ECLIPSE))
              
         return events
 
     def _select_model(self, energy_budget_j, time_budget_s, workload_infs):
-        """
-        Selects the optimal model for the current time step.
-        """
         if energy_budget_j <= 0: return None, "Energy_Depleted"
         
         max_inf_time = time_budget_s / self.models['lat_s']
@@ -337,7 +271,6 @@ class ContinuousSatSim:
         best_idx = expected_correct.idxmax()
         best_model = self.models.loc[best_idx]
         
-        # Determine limiting factor for logging
         lim_time = max_inf_time[best_idx]
         lim_eng = max_inf_energy[best_idx]
         if lim_eng < workload_infs and lim_eng < lim_time: reason = "Energy_Limited"
@@ -347,12 +280,7 @@ class ContinuousSatSim:
         return best_model, reason
 
     def run_case_study(self, case_name, config_overrides=None, events=None):
-        """
-        Executes the main simulation loop.
-        """
-        if self.raw_orbit.empty:
-            print(f"[SKIP] Skipping {case_name} (Orbit data is empty or failed to load)")
-            return
+        if self.raw_orbit.empty: return
 
         print(f"\n>>> Running Case Study: {case_name}")
         cfg = self.BASE_SYSTEM.copy()
@@ -361,116 +289,107 @@ class ContinuousSatSim:
         sim_data = self._interpolate_orbit(self.raw_orbit, self.sunlight_intervals, cfg['sim_dt_s'], cfg)
         if sim_data.empty: return
 
-        # --- SETUP POWER MANAGER ---
+        # Power Manager Setup
         flight_schedule = self._build_event_schedule(
             sim_data['Time (EpSec)'].min(), 
             sim_data['Time (EpSec)'].max(), 
             self.sunlight_intervals
         )
         
-        power_manager = PowerManager(
-            cfg['battery_capacity_wh'] * 3600.0, 
-            cfg, 
-            flight_schedule
-        )
+        power_manager = PowerManager(cfg['battery_capacity_wh'] * 3600.0, cfg, flight_schedule)
 
-        # Setup Naive Model
-        naive_model = None
-        naive_power_w = 0.0
-        naive_throughput_ips = 0.0
-        if self.naive_model_name:
-            if self.naive_model_name in self.models['Model name'].values:
-                naive_model = self.models[self.models['Model name'] == self.naive_model_name].iloc[0]
-                naive_power_w = naive_model['eng_j'] / naive_model['lat_s']
-                naive_throughput_ips = 1.0 / naive_model['lat_s']
-            else:
-                print(f"[WARN] Naive model '{self.naive_model_name}' not found. Comparison disabled.")
+        # Baseline Configs (Three distinct Naive Models to compare)
+        naive_configs = {
+            'High_Accuracy': self.models.loc[self.models['acc_decimal'].idxmax()],
+            'High_Throughput': self.models.loc[self.models['correct_infs_per_sec'].idxmax()],
+            'High_Efficiency': self.models.loc[self.models['correct_infs_per_joule'].idxmax()]
+        }
 
-        # Simulation State Initialization
         BATTERY_CAPACITY_J = cfg['battery_capacity_wh'] * 3600.0
         limit_disable_j = BATTERY_CAPACITY_J * cfg['compute_disable_pct']
+        limit_enable_j = BATTERY_CAPACITY_J * cfg['compute_enable_pct']
         
-        # Dynamic State
+        # Initialize Naive States
+        naive_states = {}
+        for name, model in naive_configs.items():
+            naive_states[name] = {
+                'battery_j': BATTERY_CAPACITY_J * cfg['initial_charge_pct'],
+                'recharging': False,
+                'buffer': deque(),
+                'total_correct': 0.0,
+                'model': model,
+                'power_w': model['eng_j'] / model['lat_s'],
+                'ips': 1.0 / model['lat_s'],
+                'logs_battery_wh': [],
+                'logs_cum_correct': []
+            }
+
+        # Dynamic State Initialization
         current_battery_j = BATTERY_CAPACITY_J * cfg['initial_charge_pct']
         frame_buffer = deque() 
         current_job = None 
-        
-        # Naive State
-        n_battery_j = current_battery_j
-        n_recharging = False
-        n_buffer = deque()
-        n_total_correct = 0
+        total_infs_correct = 0
 
-        # Reporting Stats
-        report_stats = {
-            'time_limited_count': 0,
-            'energy_limited_count': 0,
-            'buffered_count': 0,
-            'unprocessed_count': 0,
-            'total_steps': len(sim_data)
-        }
-
+        # Reporting
+        report_stats = {'time_limited_count': 0, 'energy_limited_count': 0, 'buffered_count': 0, 'unprocessed_count': 0, 'total_steps': len(sim_data)}
         logs = {
             'time_rel': [], 'battery_wh': [], 'buffer_count': [], 
             'throughput_infs': [], 'backlog_infs': [], 'model_name': [],
             'avg_accuracy': [], 'active_power_w': [], 'is_lit': [], 
-            'demand_infs': [], 'alt_km': [], 'speed_km_s': [],
-            'cum_correct': [], 'naive_battery_wh': [], 'naive_cum_correct': []
+            'demand_infs': [], 'alt_km': [], 'speed_km_s': [], 'cum_correct': [],
+            'dwell_time_s': []
         }
         
         t_start = sim_data['Time (EpSec)'].iloc[0]
-        total_infs_correct = 0
 
         for i, row in sim_data.iterrows():
             t_rel = row['Time (EpSec)'] - t_start
             dt = cfg['sim_dt_s']
             
-            # --- Environment & Ingestion ---
+            # --- Environment & Events ---
             disturb_power_w = 0.0
+            extra_demand_ips = 0.0
             cpu_blocked = False
+            
             if events:
                 for e in events:
                     if e['start'] <= t_rel < (e['start'] + e['duration']):
-                        disturb_power_w += e.get('power_w', 0)
+                        disturb_power_w += e.get('power_w', 0.0)
+                        extra_demand_ips += e.get('extra_demand_ips', 0.0)
                         if e.get('blocked', False): cpu_blocked = True
 
             solar_w = (cfg['solar_generation_mw'] / 1000.0) * row['is_lit']
             base_w = (cfg['system_baseload_mw'] / 1000.0) + disturb_power_w
             env_energy_j = (solar_w - base_w) * dt 
-            infs_for_this_second = row['demand_infs_per_sec'] * dt
             
-            # populate buffers & track frame stats
+            # Base physics demand + Artificial event injection
+            infs_for_this_second = (row['demand_infs_per_sec'] + extra_demand_ips) * dt
+            
             buffered_this_step = False
             
-            # if demand is zero, physics engine determined data is unusable
             if infs_for_this_second <= 0.0:
-                active_model_name = "blind" 
+                active_model_name = "Blind" 
                 report_stats['unprocessed_count'] += 1 
             else:
-                active_model_name = "idle"
-                if infs_for_this_second > 1.0: 
-                    if len(frame_buffer) < cfg['buffer_max_frames']:
-                        frame_buffer.append(FrameJob(i, infs_for_this_second, t_rel))
-                        buffered_this_step = True
-                        if naive_model is not None:
-                            n_buffer.append(FrameJob(i, infs_for_this_second, t_rel))
-                    else:
-                        report_stats['unprocessed_count'] += 1 # buffer overflow drop
+                active_model_name = "Idle"
+                if len(frame_buffer) < cfg['buffer_max_frames']:
+                    frame_job = FrameJob(i, infs_for_this_second, t_rel)
+                    frame_buffer.append(frame_job)
+                    buffered_this_step = True
+                    
+                    # Feed the exact same job to all naive baselines
+                    for ns in naive_states.values():
+                        if len(ns['buffer']) < cfg['buffer_max_frames']:
+                            ns['buffer'].append(FrameJob(i, infs_for_this_second, t_rel))
+                else:
+                    report_stats['unprocessed_count'] += 1
             
             if buffered_this_step and len(frame_buffer) > 1:
                  report_stats['buffered_count'] += 1
 
-            # --- Dynamic Simulation Logic (Predictive Manager) ---
-            
-            # 1. Ask Manager for Allowed Budget
+            # --- DYNAMIC SIMULATION LOGIC ---
             safe_budget_j = power_manager.get_allowed_budget(t_rel, current_battery_j, solar_w, dt)
-            
-            # 2. Hard Hardware Constraint
-            # We must also respect the hardware shutoff limit (e.g. 45% battery)
-            # If current battery is below disable limit, hard_budget becomes negative -> Energy Depleted
             hard_budget_j = current_battery_j - limit_disable_j
-            
-            # 3. Effective Budget is the stricter of the two
             energy_budget_j = min(safe_budget_j, hard_budget_j)
 
             time_available_s = dt
@@ -481,27 +400,18 @@ class ContinuousSatSim:
 
             while time_available_s > 0:
                 if cpu_blocked: active_model_name = "BLOCKED"; break
-                
-                # If budget is effectively zero or negative, we must Idle/Recharge
-                if energy_budget_j <= 1e-6:
-                    active_model_name = "RECHARGE" # Effectively saving energy
-                    break
+                if energy_budget_j <= 1e-6: active_model_name = "RECHARGE"; break
                 
                 if current_job is None:
                     if len(frame_buffer) > 0:
                         current_job = frame_buffer.popleft()
-                        
-                        # calculate the total true backlog across all queued frames
                         total_workload = current_job.remaining_inferences + sum(j.remaining_inferences for j in frame_buffer)
-                        
-                        # pass the total workload so efficient models can score higher
                         model, reason = self._select_model(energy_budget_j, time_available_s, total_workload)
                         
                         if reason == "Time_Limited": step_limitation = "Time"
                         elif reason == "Energy_Limited": step_limitation = "Energy"
                         
                         if model is None: 
-                            # fallback safety
                             frame_buffer.appendleft(current_job)
                             current_job = None
                             active_model_name = "RECHARGE"
@@ -509,16 +419,12 @@ class ContinuousSatSim:
                         current_job.assigned_model = model
                     else: break
                 
-                # Execute Job
                 if current_job:
                     model = current_job.assigned_model
                     active_model_name = model['Model name']
                     current_accuracy = model['acc_decimal']
                     
-                    infs_possible = min(current_job.remaining_inferences, 
-                                        time_available_s / model['lat_s'], 
-                                        energy_budget_j / model['eng_j'])
-                    
+                    infs_possible = min(current_job.remaining_inferences, time_available_s / model['lat_s'], energy_budget_j / model['eng_j'])
                     if infs_possible <= 0: active_model_name = "RECHARGE"; break
 
                     current_job.remaining_inferences -= infs_possible
@@ -526,14 +432,13 @@ class ContinuousSatSim:
                     t_spent = infs_possible * model['lat_s']
                     
                     current_battery_j -= e_spent
-                    energy_budget_j -= e_spent # Decrement frame budget
+                    energy_budget_j -= e_spent
                     time_available_s -= t_spent
                     processed_infs_step += infs_possible
                     processing_energy_j += e_spent
                     
                     if current_job.remaining_inferences <= 1e-6: current_job = None
 
-            # Stats Accumulation
             if step_limitation == "Time": report_stats['time_limited_count'] += 1
             elif step_limitation == "Energy": report_stats['energy_limited_count'] += 1
             
@@ -541,43 +446,41 @@ class ContinuousSatSim:
             current_battery_j = np.clip(current_battery_j + env_energy_j, 0, BATTERY_CAPACITY_J)
             total_infs_correct += processed_infs_step * current_accuracy
 
-            # --- Naive Model Logic (Legacy Hysteresis) ---
-            if naive_model is not None:
-                # Naive keeps the old "dumb" hysteresis logic
-                limit_enable_j = BATTERY_CAPACITY_J * cfg['compute_enable_pct'] # Needed for naive only
+            # --- NAIVE BASELINES LOGIC ---
+            for name, ns in naive_states.items():
+                if ns['battery_j'] < limit_disable_j: ns['recharging'] = True
+                elif ns['recharging'] and ns['battery_j'] > limit_enable_j: ns['recharging'] = False
                 
-                if n_battery_j < limit_disable_j:
-                    n_recharging = True
-                elif n_recharging and n_battery_j > limit_enable_j:
-                    n_recharging = False
-                
-                if cpu_blocked or n_recharging:
-                    n_battery_j = np.clip(n_battery_j + env_energy_j, 0, BATTERY_CAPACITY_J)
+                if cpu_blocked or ns['recharging']:
+                    ns['battery_j'] = np.clip(ns['battery_j'] + env_energy_j, 0, BATTERY_CAPACITY_J)
                 else:
-                    available_energy_j = max(0, n_battery_j - limit_disable_j)
-                    step_energy_demand_j = dt * naive_power_w
+                    available_energy_j = max(0, ns['battery_j'] - limit_disable_j)
+                    step_energy_demand_j = dt * ns['power_w']
                     
                     time_runnable_s = dt
                     if available_energy_j < step_energy_demand_j:
-                        time_runnable_s = available_energy_j / naive_power_w
-                        n_recharging = True 
+                        time_runnable_s = available_energy_j / ns['power_w']
+                        ns['recharging'] = True 
                     
-                    n_battery_j -= (time_runnable_s * naive_power_w)
-                    potential_infs = time_runnable_s * naive_throughput_ips
+                    ns['battery_j'] -= (time_runnable_s * ns['power_w'])
+                    potential_infs = time_runnable_s * ns['ips']
                     
                     processed_naive_infs = 0
-                    while potential_infs > 0 and len(n_buffer) > 0:
-                        job = n_buffer[0]
+                    while potential_infs > 0 and len(ns['buffer']) > 0:
+                        job = ns['buffer'][0]
                         taken = min(potential_infs, job.remaining_inferences)
                         job.remaining_inferences -= taken
                         potential_infs -= taken
                         processed_naive_infs += taken
-                        if job.remaining_inferences <= 1e-6: n_buffer.popleft()
+                        if job.remaining_inferences <= 1e-6: ns['buffer'].popleft()
                     
-                    n_battery_j = np.clip(n_battery_j + env_energy_j, 0, BATTERY_CAPACITY_J)
-                    n_total_correct += processed_naive_infs * naive_model['acc_decimal']
+                    ns['battery_j'] = np.clip(ns['battery_j'] + env_energy_j, 0, BATTERY_CAPACITY_J)
+                    ns['total_correct'] += processed_naive_infs * ns['model']['acc_decimal']
+                
+                ns['logs_battery_wh'].append(ns['battery_j'] / 3600.0)
+                ns['logs_cum_correct'].append(ns['total_correct'])
             
-            # --- Logging ---
+            # --- LOGGING ---
             buffer_backlog = sum(j.remaining_inferences for j in frame_buffer)
             if current_job: buffer_backlog += current_job.remaining_inferences
 
@@ -593,21 +496,25 @@ class ContinuousSatSim:
             logs['demand_infs'].append(infs_for_this_second)
             logs['alt_km'].append(row['Alt (km)'])
             logs['speed_km_s'].append(row['v_ground_km_s'])
+            logs['dwell_time_s'].append(row['dwell_time_s'])
             logs['cum_correct'].append(total_infs_correct)
-            logs['naive_battery_wh'].append(n_battery_j / 3600.0)
-            logs['naive_cum_correct'].append(n_total_correct)
 
+        # near the end of run_case_study
+        self._plot_orbit_dynamics(logs, case_name)
         self._plot_telemetry(logs, case_name, cfg)
-        self._print_verbose_report(case_name, report_stats, logs, sim_data, cfg)
+        self._plot_naive_blitz(logs, naive_states, case_name, cfg)
+        
+        # update this line to include naive_states
+        self._print_verbose_report(case_name, report_stats, logs, sim_data, cfg, naive_states)
+        
         return logs
 
-    def _print_verbose_report(self, case_name, stats, logs, sim_data, cfg):
-        # print case report header
+
+    def _print_verbose_report(self, case_name, stats, logs, sim_data, cfg, naive_states=None):
         print(f"\n{'='*60}")
         print(f"case report: {case_name}")
         print(f"{'='*60}")
         
-        # find best models
         best_throughput = self.models.loc[self.models['correct_infs_per_sec'].idxmax()]
         best_efficiency = self.models.loc[self.models['correct_infs_per_joule'].idxmax()]
         best_acc = self.models.loc[self.models['acc_decimal'].idxmax()]
@@ -618,10 +525,8 @@ class ContinuousSatSim:
         print(f"  * max accuracy:       {best_acc['Model name']:<20} ({best_acc['acc_decimal']*100:.1f}%)")
         print("-" * 60)
         
-        # calc tiles per frame
-        tiles_per_frame = (sim_data['swath_km'] / sim_data['current_target_km'])**2
+        tiles_per_frame = sim_data['tiles_per_frame']
 
-        # print new figures of merit (min / max)
         print("figures of merit (min / max):")
         print(f"  * swath (km):             {sim_data['swath_km'].min():.2f} / {sim_data['swath_km'].max():.2f}")
         print(f"  * gsd (m):                {sim_data['gsd_m'].min():.2f} / {sim_data['gsd_m'].max():.2f}")
@@ -629,7 +534,6 @@ class ContinuousSatSim:
         print(f"  * tiles per frame:        {tiles_per_frame.min():.2f} / {tiles_per_frame.max():.2f}")
         print("-" * 60)
         
-        # sim stats
         total_frames = stats['total_steps']
         print("simulation statistics:")
         if total_frames > 0:
@@ -639,12 +543,41 @@ class ContinuousSatSim:
             print(f"  * frames dropped/missed: {stats['unprocessed_count']:5d} ({stats['unprocessed_count']/total_frames*100:5.1f}%)")
         print("-" * 60)
 
-        # util breakdown
         print("model utilization (% of active processing time):")
         df_log = pd.DataFrame({'model': logs['model_name']})
         
-        # filter out non-compute states to see just compute usage
-        compute_models = df_log[~df_log['model'].isin(['Idle', 'RECHARGE', 'BLOCKED', 'Blind'])]
+        compute_models = df_log[~df_log['model'].str.lower().isin(['idle', 'recharge', 'blocked', 'blind'])] 
+        
+        if not compute_models.empty:
+            breakdown = compute_models['model'].value_counts(normalize=True) * 100
+            for name, pct in breakdown.items():
+                print(f"  * {name:<30}: {pct:5.1f}%")
+        else:
+            print("  (no models executed)")
+        print("-" * 60)
+
+        # new block to calculate and print the gains
+        if naive_states:
+            print("dynamic vs naive performance gain:")
+            dynamic_total = logs['cum_correct'][-1] if logs['cum_correct'] else 0
+            
+            for name, ns in naive_states.items():
+                clean_name = name.replace('_', ' ').lower()
+                naive_total = ns['total_correct']
+                
+                # avoid division by zero just in case a naive baseline completely fails
+                if naive_total > 0:
+                    gain_pct = ((dynamic_total - naive_total) / naive_total) * 100.0
+                    print(f"  * vs {clean_name:<20}: +{gain_pct:.1f}%")
+                else:
+                    print(f"  * vs {clean_name:<20}: +inf% (baseline scored 0)")
+                    
+        print(f"{'='*60}\n")
+
+        print("model utilization (% of active processing time):")
+        df_log = pd.DataFrame({'model': logs['model_name']})
+        
+        compute_models = df_log[~df_log['model'].str.lower().isin(['idle', 'recharge', 'blocked', 'blind'])] 
         
         if not compute_models.empty:
             breakdown = compute_models['model'].value_counts(normalize=True) * 100
@@ -655,7 +588,6 @@ class ContinuousSatSim:
         print(f"{'='*60}\n")
 
     def _interpolate_orbit(self, df, sunlight_intervals, dt, cfg):
-        # interpolates orbit data and calculates dynamic physics
         if df.empty: return pd.DataFrame()
         
         t_start = df['Time (EpSec)'].min()
@@ -686,103 +618,199 @@ class ContinuousSatSim:
         new_df['v_ground_km_s'] = v_ground
         new_df['dwell_time_s'] = new_df['swath_km'] / (v_ground + 1e-9)
 
-        # dual regime logic based on altitude
         is_low_alt = new_df['Alt (km)'] <= cfg['alt_threshold_km']
-        
         target_size_km = np.where(is_low_alt, cfg['low_alt_target_km'], cfg['high_alt_target_km'])
         min_px = np.where(is_low_alt, cfg['low_alt_min_px'], cfg['high_alt_min_px'])
         
         target_size_m = target_size_km * 1000.0
         new_df['px_per_object'] = target_size_m / new_df['gsd_m']
         
-        tpu_dim = cfg['tpu_dim']
-        infs_per_object = np.where(new_df['px_per_object'] < min_px, 0.0, (new_df['px_per_object'] / tpu_dim)**2)
+        max_tiles_per_frame = (cfg['sensor_res'] / cfg['tpu_dim'])**2
         
-        objects_in_fov = (new_df['swath_km'] / target_size_km)**2
-        total_infs_per_frame = objects_in_fov * infs_per_object
-        new_df['demand_infs_per_sec'] = total_infs_per_frame / new_df['dwell_time_s']
-        
-        # save this for the reporting tool so it doesn't crash on the dynamic config
+        new_df['tiles_per_frame'] = np.where(new_df['px_per_object'] < min_px, 0.0, max_tiles_per_frame)
+        new_df['demand_infs_per_sec'] = new_df['tiles_per_frame'] / new_df['dwell_time_s']
         new_df['current_target_km'] = target_size_km
         
         return new_df
 
-    def _plot_telemetry(self, logs, case_name, cfg):
-        """
-        Generates a 4-panel dashboard visualizing satellite telemetry.
-        """
+    def _set_plot_style(self):
+        # boost all font sizes and line widths for presentation slides
+        plt.rcParams.update({
+            'font.size': 16,
+            'axes.titlesize': 20,
+            'axes.labelsize': 18,
+            'xtick.labelsize': 14,
+            'ytick.labelsize': 14,
+            'legend.fontsize': 14,
+            'lines.linewidth': 3.0,
+            'figure.titlesize': 24,
+            'figure.titleweight': 'bold'
+        })
+
+    def _plot_orbit_dynamics(self, logs, case_name):
+        self._set_plot_style()
+        clean_name = case_name.replace('_', ' ')
         t_plot = np.array(logs['time_rel'])
         
-        fig = plt.figure(figsize=(12, 16))
-        gs = fig.add_gridspec(4, 1, height_ratios=[1, 1.5, 1.5, 1])
-        fig.suptitle(f"Case Study: {case_name}", fontsize=16)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
+        fig.suptitle(f"case study: {clean_name}\norbit & data dynamics", y=0.98)
+
+        # panel 1: altitude and speed
+        ax1.plot(t_plot, logs['alt_km'], color='gray', label='altitude')
+        ax1.set_ylabel('altitude (km)')
+        
+        ax1_t = ax1.twinx()
+        ax1_t.plot(t_plot, logs['speed_km_s'], 'r--', label='ground speed')
+        ax1_t.set_ylabel('speed (km/s)', color='r')
+        
+        lines_1, labels_1 = ax1.get_legend_handles_labels()
+        lines_2, labels_2 = ax1_t.get_legend_handles_labels()
+        ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
+        ax1.grid(True, alpha=0.3)
+
+        # panel 2: dwell time and demand
+        demand = np.array(logs['demand_infs'])
+        dwell = np.array(logs['dwell_time_s'])
+        
+        ax2.plot(t_plot, dwell, color='tab:blue', label='frame dwell time (s)')
+        ax2.set_ylabel('available time per frame (s)', color='tab:blue')
+        ax2.set_xlabel('mission time (s)')
+        
+        ax2_t = ax2.twinx()
+        ax2_t.fill_between(t_plot, demand, color='tab:orange', alpha=0.3, label='inference demand')
+        ax2_t.plot(t_plot, demand, color='tab:orange', linewidth=2)
+        ax2_t.set_ylabel('workload demand (infs/sec)', color='tab:orange')
+        
+        lines_3, labels_3 = ax2.get_legend_handles_labels()
+        lines_4, labels_4 = ax2_t.get_legend_handles_labels()
+        ax2.legend(lines_3 + lines_4, labels_3 + labels_4, loc='upper left')
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        filename = f"{case_name}_orbit_dynamics.png"
+        save_path = self.output_dir / filename
+        plt.savefig(save_path, dpi=300)
+        print(f"saved orbit dynamics plot to: {save_path}")
+        plt.close()
+
+    def _plot_telemetry(self, logs, case_name, cfg):
+        self._set_plot_style()
+        clean_name = case_name.replace('_', ' ')
+        t_plot = np.array(logs['time_rel'])
+        
+        fig = plt.figure(figsize=(14, 18))
+        gs = fig.add_gridspec(4, 1, height_ratios=[1, 1.5, 1.5, 1], hspace=0.3)
+        fig.suptitle(f"case study: {clean_name}\ndynamic telemetry", y=0.98)
 
         ax1 = fig.add_subplot(gs[0])
         ax2 = fig.add_subplot(gs[1], sharex=ax1)
         ax3 = fig.add_subplot(gs[2], sharex=ax1)
         ax4 = fig.add_subplot(gs[3])
 
-        # Orbit
-        ax1.plot(t_plot, logs['alt_km'], color='gray', label='Altitude')
-        ax1.set_ylabel('Altitude (km)')
+        # 1. orbit context
+        ax1.plot(t_plot, logs['alt_km'], color='gray', label='altitude')
+        ax1.set_ylabel('altitude (km)')
+        
         ax1_t = ax1.twinx()
-        ax1_t.plot(t_plot, logs['speed_km_s'], 'r--', label='Speed')
-        ax1_t.set_ylabel('Speed (km/s)', color='r')
-        ax1.legend(loc='upper left')
+        ax1_t.plot(t_plot, logs['speed_km_s'], 'r--', label='speed')
+        ax1_t.set_ylabel('speed (km/s)', color='r')
+        
+        lines_1, labels_1 = ax1.get_legend_handles_labels()
+        lines_2, labels_2 = ax1_t.get_legend_handles_labels()
+        ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
         ax1.grid(True, alpha=0.3)
         plt.setp(ax1.get_xticklabels(), visible=False)
 
-        # Energy
-        ax2.plot(t_plot, logs['battery_wh'], 'g', label='Dynamic Battery')
-        if any(logs['naive_battery_wh']):
-            ax2.plot(t_plot, logs['naive_battery_wh'], color='tab:red', linestyle='--', alpha=0.7, label=f'Naive ({self.naive_model_name})')
-        
-        ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='r', linestyle=':', label='Hard Min')
-        # Note: Resume line is less relevant for Dynamic model now, but kept for reference
-        ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='g', linestyle=':', label='Ref Resume')
+        # 2. energy states
+        ax2.plot(t_plot, logs['battery_wh'], 'g', label='dynamic battery')
+        ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='r', linestyle=':', label='hard min (shutoff)')
+        ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='g', linestyle=':', label='ref resume')
         
         lit = np.array(logs['is_lit'])
         ax2.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax2.get_xaxis_transform(), 
-                         color='gold', alpha=0.2, label='Sunlight')
-        ax2.set_ylabel('Battery (Wh)')
+                         color='gold', alpha=0.2, label='sunlight')
+        ax2.set_ylabel('battery (wh)')
         ax2.legend(loc='upper left')
         ax2.grid(True, alpha=0.3)
         plt.setp(ax2.get_xticklabels(), visible=False)
 
-        # Performance & Backlog
-        ax3.plot(t_plot, logs['cum_correct'], 'k', label='Dynamic Correct')
-        if any(logs['naive_cum_correct']):
-            ax3.plot(t_plot, logs['naive_cum_correct'], color='tab:red', linestyle='--', label='Naive Correct')
-        ax3.set_ylabel('Total Correct Inferences')
+        # 3. performance and backlog
+        ax3.plot(t_plot, logs['cum_correct'], 'k', label='dynamic correct infs')
+        ax3.set_ylabel('total correct inferences')
         ax3.legend(loc='upper left')
         ax3.grid(True, alpha=0.3)
         
         ax3_t = ax3.twinx()
-        ax3_t.fill_between(t_plot, logs['backlog_infs'], color='tab:orange', alpha=0.15, label='Backlog')
-        ax3_t.plot(t_plot, logs['backlog_infs'], color='tab:orange', linewidth=0.5, alpha=0.4)
-        ax3_t.set_ylabel('Dynamic Backlog Size', color='tab:orange')
+        ax3_t.fill_between(t_plot, logs['backlog_infs'], color='tab:orange', alpha=0.15, label='backlog')
+        ax3_t.plot(t_plot, logs['backlog_infs'], color='tab:orange', linewidth=1.5, alpha=0.6)
+        ax3_t.set_ylabel('dynamic backlog size', color='tab:orange')
         ax3_t.tick_params(axis='y', labelcolor='tab:orange')
-        ax3.set_xlabel('Time (s)')
+        ax3.set_xlabel('time (s)')
 
-        # Utilization
+        # 4. total utilization
         df_log = pd.DataFrame({'model': logs['model_name'], 'infs': logs['throughput_infs']})
         stats = df_log[df_log['infs'] > 0].groupby('model')['infs'].sum().sort_values()
         
         if not stats.empty:
             bars = ax4.barh(stats.index, stats.values, color='tab:purple')
-            ax4.bar_label(bars, fmt='{:,.0f}', padding=3)
+            ax4.bar_label(bars, fmt='{:,.0f}', padding=5, fontsize=12)
         else:
-            ax4.text(0.5, 0.5, "No Inferences Performed", ha='center', va='center')
+            ax4.text(0.5, 0.5, "no inferences performed", ha='center', va='center', fontsize=16)
         
-        ax4.set_xlabel('Total Inferences Processed')
-        ax4.set_title('Total Model Utilization')
+        ax4.set_xlabel('total inferences processed')
         ax4.grid(True, axis='x', alpha=0.3)
 
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
         filename = f"{case_name}.png"
         save_path = self.output_dir / filename
-        plt.savefig(save_path)
-        print(f"Saved plot to: {save_path}")
+        plt.savefig(save_path, dpi=300)
+        print(f"saved primary plot to: {save_path}")
+        plt.close()
+
+    def _plot_naive_blitz(self, logs, naive_states, case_name, cfg):
+        self._set_plot_style()
+        clean_name = case_name.replace('_', ' ')
+        t_plot = np.array(logs['time_rel'])
+        
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12), sharex=True, gridspec_kw={'hspace': 0.2})
+        fig.suptitle(f"case study: {clean_name}\nnaive blitz comparison", y=0.96)
+
+        colors = {'High_Accuracy': 'tab:blue', 'High_Throughput': 'tab:red', 'High_Efficiency': 'tab:purple'}
+        
+        # top panel: battery comparison
+        ax1.plot(t_plot, logs['battery_wh'], color='black', linewidth=3.5, label='dynamic (predictive)')
+        for name, ns in naive_states.items():
+            clean_naive = name.replace('_', ' ')
+            ax1.plot(t_plot, ns['logs_battery_wh'], color=colors[name], linestyle='--', alpha=0.8, label=f'naive ({clean_naive})')
+
+        ax1.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='red', linestyle=':', alpha=0.5, label='shutoff limit')
+        
+        lit = np.array(logs['is_lit'])
+        ax1.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax1.get_xaxis_transform(), 
+                         color='gold', alpha=0.2, label='sunlight')
+        
+        ax1.set_ylabel('battery (wh)')
+        ax1.set_title('battery management strategies')
+        ax1.legend(loc='lower right', framealpha=0.9)
+        ax1.grid(True, alpha=0.3)
+
+        # bottom panel: inference yield
+        ax2.plot(t_plot, logs['cum_correct'], color='black', linewidth=3.5, label='dynamic system')
+        for name, ns in naive_states.items():
+            clean_naive = name.replace('_', ' ')
+            ax2.plot(t_plot, ns['logs_cum_correct'], color=colors[name], linestyle='--', alpha=0.8, label=f'naive ({clean_naive})')
+
+        ax2.set_xlabel('mission time (s)')
+        ax2.set_ylabel('cumulative correct inferences')
+        ax2.set_title('inference yield')
+        ax2.legend(loc='upper left', framealpha=0.9)
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout(rect=[0, 0, 1, 0.94])
+        filename = f"{case_name}_naive_blitz.png"
+        save_path = self.output_dir / filename
+        plt.savefig(save_path, dpi=300)
+        print(f"saved blitz plot to: {save_path}")
         plt.close()
 
 def run_all_case_studies():
@@ -790,31 +818,45 @@ def run_all_case_studies():
     orbit_path = ROOT_DIR / "data/stk"
     out_dir = ROOT_DIR / "results/case_studies"
 
-    sim_heo = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='HEO', num_orbits=1, naive_model_name='Grid A1.0 D06')
+    sim_heo = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='HEO', num_orbits=1)
     
-    # HEO Cases
+    # ==========================
+    # HEO Cases (Time Domain)
+    # ==========================
+    # Baseline
     sim_heo.run_case_study("HEO_01_Standard", config_overrides=ContinuousSatSim.get_heo_config())
     
-    heo_crisis = ContinuousSatSim.get_heo_config()
-    heo_crisis['initial_charge_pct'] = 0.25
-    sim_heo.run_case_study("HEO_02_PowerCrisis", config_overrides=heo_crisis)
+    # 02. Data Deluge: Massive backlog forcing rapid time-limited processing at perigee
+    heo_deluge = ContinuousSatSim.get_heo_config()
+    heo_deluge['low_alt_target_km'] = 0.25 # Double the target resolution requirement
+    sim_heo.run_case_study("HEO_02_Data_Deluge", config_overrides=heo_deluge)
     
-    isr_events = [{'start': 20000, 'duration': 600, 'power_w': 1.5, 'blocked': True}] # 1.5W transmission
-    sim_heo.run_case_study("HEO_03_ISR_Interruption", config_overrides=ContinuousSatSim.get_heo_config(), events=isr_events)
+    # 03. Power Starved (Injection): Turn on massive power drain exactly when data ingestion spikes
+    # HEO perigee roughly corresponds to the start (t=0 to 1000s) based on orbit geometry. 
+    radar_events = [{'start': 0, 'duration': 1500, 'power_w': 3.5, 'blocked': False}]
+    sim_heo.run_case_study("HEO_03_Power_Starved", config_overrides=ContinuousSatSim.get_heo_config(), events=radar_events)
 
-    # SSO Cases 
-    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=20, naive_model_name='Grid A1.0 D06')
+    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=20)
     
+    # ==========================
+    # SSO Cases (Power Domain)
+    # ==========================
+    # Baseline
     sso_cfg = ContinuousSatSim.get_sso_config()
     sim_sso.run_case_study("SSO_01_Standard", config_overrides=sso_cfg)
     
-    sso_vol = sso_cfg.copy()
-    sso_vol['target_tile_km'] = 40.0 
-    sim_sso.run_case_study("SSO_02_High_Data_Volume", config_overrides=sso_vol)
+    # 02. Eclipse Crisis: Degraded solar arrays leave thin margins for eclipse survival
+    sso_crisis = sso_cfg.copy()
+    sso_crisis['solar_generation_mw'] = 1000.0  
+    sim_sso.run_case_study("SSO_02_Eclipse_Crisis", config_overrides=sso_crisis)
     
-    sso_deg = sso_cfg.copy()
-    sso_deg['solar_generation_mw'] = 400.0  # Solar panels damaged (drop to 400mW)
-    sim_sso.run_case_study("SSO_03_Degraded_Power", config_overrides=sso_deg)
+    # 03. Target Rich (Injection): Passing over intelligence hotspots generating huge time-limited burst demands
+    burst_events = [
+        {'start': 5000, 'duration': 300, 'extra_demand_ips': 150.0},
+        {'start': 25000, 'duration': 400, 'extra_demand_ips': 200.0},
+        {'start': 60000, 'duration': 300, 'extra_demand_ips': 250.0},
+    ]
+    sim_sso.run_case_study("SSO_03_Target_Rich", config_overrides=sso_cfg, events=burst_events)
 
 if __name__ == "__main__":
     run_all_case_studies()
