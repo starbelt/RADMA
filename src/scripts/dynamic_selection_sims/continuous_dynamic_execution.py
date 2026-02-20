@@ -593,48 +593,58 @@ class ContinuousSatSim:
             logs['naive_cum_correct'].append(n_total_correct)
 
         self._plot_telemetry(logs, case_name, cfg)
-        self._print_verbose_report(case_name, report_stats, logs)
+        self._print_verbose_report(case_name, report_stats, logs, sim_data, cfg)
         return logs
 
-    def _print_verbose_report(self, case_name, stats, logs):
-        """
-        Prints a detailed textual summary of the case study results.
-        """
+    def _print_verbose_report(self, case_name, stats, logs, sim_data, cfg):
+        # print case report header
         print(f"\n{'='*60}")
-        print(f"CASE REPORT: {case_name}")
+        print(f"case report: {case_name}")
         print(f"{'='*60}")
         
+        # find best models
         best_throughput = self.models.loc[self.models['correct_infs_per_sec'].idxmax()]
         best_efficiency = self.models.loc[self.models['correct_infs_per_joule'].idxmax()]
         best_acc = self.models.loc[self.models['acc_decimal'].idxmax()]
         
-        print(f"MODEL LANDSCAPE:")
-        print(f"  * Highest Throughput: {best_throughput['Model name']:<20} ({best_throughput['correct_infs_per_sec']:.1f} correct inf/s)")
-        print(f"  * Best Efficiency:    {best_efficiency['Model name']:<20} ({best_efficiency['correct_infs_per_joule']:.1f} correct inf/J)")
-        print(f"  * Max Accuracy:       {best_acc['Model name']:<20} ({best_acc['acc_decimal']*100:.1f}%)")
+        print("model landscape:")
+        print(f"  * highest throughput: {best_throughput['Model name']:<20} ({best_throughput['correct_infs_per_sec']:.1f} correct inf/s)")
+        print(f"  * best efficiency:    {best_efficiency['Model name']:<20} ({best_efficiency['correct_infs_per_joule']:.1f} correct inf/j)")
+        print(f"  * max accuracy:       {best_acc['Model name']:<20} ({best_acc['acc_decimal']*100:.1f}%)")
         print("-" * 60)
         
+        # calc tiles per frame
+        tiles_per_frame = (sim_data['swath_km'] / cfg['target_tile_km'])**2
+
+        # print new figures of merit (min / max)
+        print("figures of merit (min / max):")
+        print(f"  * swath (km):             {sim_data['swath_km'].min():.2f} / {sim_data['swath_km'].max():.2f}")
+        print(f"  * gsd (m):                {sim_data['gsd_m'].min():.2f} / {sim_data['gsd_m'].max():.2f}")
+        print(f"  * ground velocity (km/s): {sim_data['v_ground_km_s'].min():.2f} / {sim_data['v_ground_km_s'].max():.2f}")
+        print(f"  * tiles per frame:        {tiles_per_frame.min():.2f} / {tiles_per_frame.max():.2f}")
+        print("-" * 60)
+        
+        # sim stats
         total_frames = stats['total_steps']
-        print(f"SIMULATION STATISTICS:")
+        print("simulation statistics:")
         if total_frames > 0:
-            print(f"  * Time Limited Frames:   {stats['time_limited_count']:5d} ({stats['time_limited_count']/total_frames*100:5.1f}%)")
-            print(f"  * Energy Limited Frames: {stats['energy_limited_count']:5d} ({stats['energy_limited_count']/total_frames*100:5.1f}%)")
-            print(f"  * Frames Buffered:       {stats['buffered_count']:5d} ({stats['buffered_count']/total_frames*100:5.1f}%)")
-            print(f"  * Frames Dropped/Missed: {stats['unprocessed_count']:5d} ({stats['unprocessed_count']/total_frames*100:5.1f}%)")
+            print(f"  * time limited frames:   {stats['time_limited_count']:5d} ({stats['time_limited_count']/total_frames*100:5.1f}%)")
+            print(f"  * energy limited frames: {stats['energy_limited_count']:5d} ({stats['energy_limited_count']/total_frames*100:5.1f}%)")
+            print(f"  * frames buffered:       {stats['buffered_count']:5d} ({stats['buffered_count']/total_frames*100:5.1f}%)")
+            print(f"  * frames dropped/missed: {stats['unprocessed_count']:5d} ({stats['unprocessed_count']/total_frames*100:5.1f}%)")
         print("-" * 60)
 
-        print("model utilization (% of total inferences processed):")
-        df_log = pd.DataFrame({'model': logs['model_name'], 'infs': logs['throughput_infs']})
+        # util breakdown
+        print("model utilization (% of active processing time):")
+        df_log = pd.DataFrame({'model': logs['model_name']})
+        
+        # filter out non-compute states to see just compute usage
         compute_models = df_log[~df_log['model'].isin(['Idle', 'RECHARGE', 'BLOCKED', 'Blind'])]
         
         if not compute_models.empty:
-            total_infs = compute_models['infs'].sum()
-            if total_infs > 0:
-                breakdown = (compute_models.groupby('model')['infs'].sum() / total_infs) * 100
-                for name, pct in breakdown.sort_values(ascending=False).items():
-                    print(f"  * {name:<30}: {pct:5.1f}%")
-            else:
-                print("  (no inferences processed)")
+            breakdown = compute_models['model'].value_counts(normalize=True) * 100
+            for name, pct in breakdown.items():
+                print(f"  * {name:<30}: {pct:5.1f}%")
         else:
             print("  (no models executed)")
         print(f"{'='*60}\n")
