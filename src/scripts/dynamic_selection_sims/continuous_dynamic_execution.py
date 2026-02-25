@@ -58,7 +58,7 @@ class PowerManager:
 
     def _get_current_event(self, t_now):
         while (self.current_event_idx < len(self.events) and 
-               t_now > self.events[self.current_event_idx].time_end):
+            t_now > self.events[self.current_event_idx].time_end):
             self.current_event_idx += 1
             
         if self.current_event_idx >= len(self.events):
@@ -192,7 +192,7 @@ class ContinuousSatSim:
         
         if 'True Anomaly (deg)' in df.columns:
             ta = df['True Anomaly (deg)'].values
-            diffs = np.diff(ta) 
+            diffs = np.diff(ta) #type:ignore
             wrap_indices = np.where(diffs < -300)[0]
             if len(wrap_indices) > 0 and len(wrap_indices) >= num_orbits:
                 cutoff_idx = wrap_indices[num_orbits - 1]
@@ -208,6 +208,52 @@ class ContinuousSatSim:
 
         print(f"[INFO] Loaded {len(df)} rows of orbit data for {self.sat_prefix}.")
         return df, sunlight_intervals
+    
+    def _interpolate_orbit(self, df, sunlight_intervals, dt, cfg):
+        if df.empty: return pd.DataFrame()
+        
+        t_start = df['Time (EpSec)'].min()
+        t_end = df['Time (EpSec)'].max()
+        new_times = np.arange(t_start, t_end, dt)
+        
+        cols = ['x (km)', 'y (km)', 'z (km)', 'vx (km/sec)', 'vy (km/sec)', 'vz (km/sec)', 'Alt (km)']
+        new_data = {'Time (EpSec)': new_times}
+        for c in cols:
+            new_data[c] = np.interp(new_times, df['Time (EpSec)'], df[c])
+        
+        is_lit = np.zeros_like(new_times)
+        for s, e in sunlight_intervals:
+            mask = (new_times >= s) & (new_times <= e)
+            is_lit[mask] = 1.0
+        new_data['is_lit'] = is_lit
+        new_df = pd.DataFrame(new_data)
+
+        new_df['gsd_m'] = (new_df['Alt (km)'] * cfg['pixel_pitch_um']) / cfg['focal_length_mm']
+        new_df['swath_km'] = (new_df['gsd_m'] * cfg['sensor_res']) / 1000.0
+        
+        r = new_df[['x (km)', 'y (km)', 'z (km)']].values
+        v = new_df[['vx (km/sec)', 'vy (km/sec)', 'vz (km/sec)']].values
+        r_norm = np.linalg.norm(r, axis=1, keepdims=True)
+        v_vert = np.sum(v * (r/r_norm), axis=1, keepdims=True) * (r/r_norm)
+        v_ground = np.linalg.norm(v - v_vert, axis=1)
+        
+        new_df['v_ground_km_s'] = v_ground
+        new_df['dwell_time_s'] = new_df['swath_km'] / (v_ground + 1e-9)
+
+        is_low_alt = new_df['Alt (km)'] <= cfg['alt_threshold_km']
+        target_size_km = np.where(is_low_alt, cfg['low_alt_target_km'], cfg['high_alt_target_km'])
+        min_px = np.where(is_low_alt, cfg['low_alt_min_px'], cfg['high_alt_min_px'])
+        
+        target_size_m = target_size_km * 1000.0
+        new_df['px_per_object'] = target_size_m / new_df['gsd_m']
+        
+        max_tiles_per_frame = (cfg['sensor_res'] / cfg['tpu_dim'])**2 # Hardcodes num tiles to even div of resolution/model input 
+        
+        new_df['tiles_per_frame'] = np.where(new_df['px_per_object'] < min_px, 0.0, max_tiles_per_frame)
+        new_df['demand_infs_per_sec'] = new_df['tiles_per_frame'] / new_df['dwell_time_s'] # NOTE: Implement Dynamic Tiling here
+        new_df['current_target_km'] = target_size_km
+        
+        return new_df
 
     def _parse_lighting_schedule(self, file_path):
         intervals = []
@@ -255,8 +301,7 @@ class ContinuousSatSim:
             current_t = max(current_t, end_seg)
             
         if current_t < t_end_abs:
-             events.append(OrbitalEvent(current_t - t_start_abs, t_end_abs - t_start_abs, FlightRegime.ECLIPSE))
-             
+            events.append(OrbitalEvent(current_t - t_start_abs, t_end_abs - t_start_abs, FlightRegime.ECLIPSE))
         return events
 
     def _select_model(self, energy_budget_j, time_budget_s, workload_infs):
@@ -385,9 +430,9 @@ class ContinuousSatSim:
                     report_stats['unprocessed_count'] += 1
             
             if buffered_this_step and len(frame_buffer) > 1:
-                 report_stats['buffered_count'] += 1
+                report_stats['buffered_count'] += 1
 
-            # --- DYNAMIC SIMULATION LOGIC ---
+            ## Budget Calculations
             safe_budget_j = power_manager.get_allowed_budget(t_rel, current_battery_j, solar_w, dt)
             hard_budget_j = current_battery_j - limit_disable_j
             energy_budget_j = min(safe_budget_j, hard_budget_j)
@@ -587,52 +632,6 @@ class ContinuousSatSim:
             print("  (no models executed)")
         print(f"{'='*60}\n")
 
-    def _interpolate_orbit(self, df, sunlight_intervals, dt, cfg):
-        if df.empty: return pd.DataFrame()
-        
-        t_start = df['Time (EpSec)'].min()
-        t_end = df['Time (EpSec)'].max()
-        new_times = np.arange(t_start, t_end, dt)
-        
-        cols = ['x (km)', 'y (km)', 'z (km)', 'vx (km/sec)', 'vy (km/sec)', 'vz (km/sec)', 'Alt (km)']
-        new_data = {'Time (EpSec)': new_times}
-        for c in cols:
-            new_data[c] = np.interp(new_times, df['Time (EpSec)'], df[c])
-        
-        is_lit = np.zeros_like(new_times)
-        for s, e in sunlight_intervals:
-            mask = (new_times >= s) & (new_times <= e)
-            is_lit[mask] = 1.0
-        new_data['is_lit'] = is_lit
-        new_df = pd.DataFrame(new_data)
-
-        new_df['gsd_m'] = (new_df['Alt (km)'] * cfg['pixel_pitch_um']) / cfg['focal_length_mm']
-        new_df['swath_km'] = (new_df['gsd_m'] * cfg['sensor_res']) / 1000.0
-        
-        r = new_df[['x (km)', 'y (km)', 'z (km)']].values
-        v = new_df[['vx (km/sec)', 'vy (km/sec)', 'vz (km/sec)']].values
-        r_norm = np.linalg.norm(r, axis=1, keepdims=True)
-        v_vert = np.sum(v * (r/r_norm), axis=1, keepdims=True) * (r/r_norm)
-        v_ground = np.linalg.norm(v - v_vert, axis=1)
-        
-        new_df['v_ground_km_s'] = v_ground
-        new_df['dwell_time_s'] = new_df['swath_km'] / (v_ground + 1e-9)
-
-        is_low_alt = new_df['Alt (km)'] <= cfg['alt_threshold_km']
-        target_size_km = np.where(is_low_alt, cfg['low_alt_target_km'], cfg['high_alt_target_km'])
-        min_px = np.where(is_low_alt, cfg['low_alt_min_px'], cfg['high_alt_min_px'])
-        
-        target_size_m = target_size_km * 1000.0
-        new_df['px_per_object'] = target_size_m / new_df['gsd_m']
-        
-        max_tiles_per_frame = (cfg['sensor_res'] / cfg['tpu_dim'])**2
-        
-        new_df['tiles_per_frame'] = np.where(new_df['px_per_object'] < min_px, 0.0, max_tiles_per_frame)
-        new_df['demand_infs_per_sec'] = new_df['tiles_per_frame'] / new_df['dwell_time_s']
-        new_df['current_target_km'] = target_size_km
-        
-        return new_df
-
     def _set_plot_style(self):
         # boost all font sizes and line widths for presentation slides
         plt.rcParams.update({
@@ -728,7 +727,7 @@ class ContinuousSatSim:
         
         lit = np.array(logs['is_lit'])
         ax2.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax2.get_xaxis_transform(), 
-                         color='gold', alpha=0.2, label='sunlight')
+                        color='gold', alpha=0.2, label='sunlight')
         ax2.set_ylabel('battery (wh)')
         ax2.legend(loc='upper left')
         ax2.grid(True, alpha=0.3)
@@ -752,7 +751,7 @@ class ContinuousSatSim:
         stats = df_log[df_log['infs'] > 0].groupby('model')['infs'].sum().sort_values()
         
         if not stats.empty:
-            bars = ax4.barh(stats.index, stats.values, color='tab:purple')
+            bars = ax4.barh(stats.index, stats.values, color='tab:purple') #type:ignore
             ax4.bar_label(bars, fmt='{:,.0f}', padding=5, fontsize=12)
         else:
             ax4.text(0.5, 0.5, "no inferences performed", ha='center', va='center', fontsize=16)
@@ -760,7 +759,7 @@ class ContinuousSatSim:
         ax4.set_xlabel('total inferences processed')
         ax4.grid(True, axis='x', alpha=0.3)
 
-        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.tight_layout(rect=[0, 0, 1, 0.96]) #type:ignore
         filename = f"{case_name}.png"
         save_path = self.output_dir / filename
         plt.savefig(save_path, dpi=300)
@@ -787,7 +786,7 @@ class ContinuousSatSim:
         
         lit = np.array(logs['is_lit'])
         ax1.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax1.get_xaxis_transform(), 
-                         color='gold', alpha=0.2, label='sunlight')
+                        color='gold', alpha=0.2, label='sunlight')
         
         ax1.set_ylabel('battery (wh)')
         ax1.set_title('battery management strategies')
@@ -806,7 +805,7 @@ class ContinuousSatSim:
         ax2.legend(loc='upper left', framealpha=0.9)
         ax2.grid(True, alpha=0.3)
 
-        plt.tight_layout(rect=[0, 0, 1, 0.94])
+        plt.tight_layout(rect=[0, 0, 1, 0.94]) # type: ignore
         filename = f"{case_name}_naive_blitz.png"
         save_path = self.output_dir / filename
         plt.savefig(save_path, dpi=300)
@@ -820,37 +819,33 @@ def run_all_case_studies():
 
     sim_heo = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='HEO', num_orbits=1)
     
-    # ==========================
     # HEO Cases (Time Domain)
-    # ==========================
     # Baseline
     sim_heo.run_case_study("HEO_01_Standard", config_overrides=ContinuousSatSim.get_heo_config())
     
-    # 02. Data Deluge: Massive backlog forcing rapid time-limited processing at perigee
+    # Massive backlog forcing rapid time-limited processing at perigee
     heo_deluge = ContinuousSatSim.get_heo_config()
     heo_deluge['low_alt_target_km'] = 0.25 # Double the target resolution requirement
     sim_heo.run_case_study("HEO_02_Data_Deluge", config_overrides=heo_deluge)
     
-    # 03. Power Starved (Injection): Turn on massive power drain exactly when data ingestion spikes
+    # Turn on power drain when data ingestion spikes
     # HEO perigee roughly corresponds to the start (t=0 to 1000s) based on orbit geometry. 
     radar_events = [{'start': 0, 'duration': 1500, 'power_w': 3.5, 'blocked': False}]
     sim_heo.run_case_study("HEO_03_Power_Starved", config_overrides=ContinuousSatSim.get_heo_config(), events=radar_events)
 
     sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=20)
     
-    # ==========================
     # SSO Cases (Power Domain)
-    # ==========================
     # Baseline
     sso_cfg = ContinuousSatSim.get_sso_config()
     sim_sso.run_case_study("SSO_01_Standard", config_overrides=sso_cfg)
     
-    # 02. Eclipse Crisis: Degraded solar arrays leave thin margins for eclipse survival
+    # Degraded solar arrays leave thin margins for eclipse survival
     sso_crisis = sso_cfg.copy()
     sso_crisis['solar_generation_mw'] = 1000.0  
     sim_sso.run_case_study("SSO_02_Eclipse_Crisis", config_overrides=sso_crisis)
     
-    # 03. Target Rich (Injection): Passing over intelligence hotspots generating huge time-limited burst demands
+    # Target Rich (Injection): hotspots generating huge time-limited burst demands
     burst_events = [
         {'start': 5000, 'duration': 300, 'extra_demand_ips': 150.0},
         {'start': 25000, 'duration': 400, 'extra_demand_ips': 200.0},
