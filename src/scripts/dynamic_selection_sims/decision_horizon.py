@@ -30,7 +30,7 @@ class ContinuousSatSim:
     # uses an n-frame sliding horizon to budget energy 
     
     BASE_SYSTEM = {
-        'pixel_pitch_um': 3.45,
+        'pixel_pitch_um': 3.45, ## TODO: Track through 55-105 inf/s as baseline - cuts out models without cutting all models
         'sensor_res': 4096,
         'tpu_dim': 224,
         'system_baseload_mw': 300.0,
@@ -824,19 +824,67 @@ class ContinuousSatSim:
         return logs
 
 def run_all_case_studies():
+    # model_json = ROOT_DIR / "data/compiled_characterization.json" 
+    # orbit_path = ROOT_DIR / "data/stk"
+    # out_dir = ROOT_DIR / "results/case_studies"
+
+    # sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=20)
+    
+    # sso_cfg = ContinuousSatSim.get_sso_config()
+    # sso_cfg['enforce_clearing'] = False
+    
+    # # test from 1 frames up to 2000 frames
+    # test_horizons = [240]
+    
+    # sim_sso.run_case_study("SSO_01_Standard_Sweep", test_horizons)
+
     model_json = ROOT_DIR / "data/compiled_characterization.json" 
     orbit_path = ROOT_DIR / "data/stk"
     out_dir = ROOT_DIR / "results/case_studies"
 
+    # sim_heo = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='HEO', num_orbits=1)
+    
+    # # HEO Cases (Time Domain)
+    # # Baseline
+    # sim_heo.run_case_study("HEO_01_Standard", config_overrides=ContinuousSatSim.get_heo_config())
+    
+    # # Massive backlog forcing rapid time-limited processing at perigee
+    # heo_deluge = ContinuousSatSim.get_heo_config()
+    # heo_deluge['low_alt_target_km'] = 0.25 # Double the target resolution requirement
+    # sim_heo.run_case_study("HEO_02_Data_Deluge", config_overrides=heo_deluge)
+    
+    # # Turn on power drain when data ingestion spikes
+    # # HEO perigee roughly corresponds to the start (t=0 to 1000s) based on orbit geometry. 
+    # radar_events = [{'start': 0, 'duration': 1500, 'power_w': 3.5, 'blocked': False}]
+    # sim_heo.run_case_study("HEO_03_Power_Starved", config_overrides=ContinuousSatSim.get_heo_config(), events=radar_events)
+
     sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=20)
     
+    # SSO Cases (Power Domain)
+    # Baseline
     sso_cfg = ContinuousSatSim.get_sso_config()
-    sso_cfg['enforce_clearing'] = False
+    sim_sso.run_case_study("SSO_01_Standard", config_overrides=sso_cfg)
     
-    # test from 1 frames up to 2000 frames
-    test_horizons = [240]
+    # Degraded solar arrays leave thin margins for eclipse survival
+    sso_crisis = sso_cfg.copy()
+    sso_crisis['solar_generation_mw'] = 1000.0  
+    sim_sso.run_case_study("SSO_02_Eclipse_Crisis", config_overrides=sso_crisis)
     
-    sim_sso.run_horizon_sweep("SSO_01_Standard_Sweep", test_horizons, num_orbits=20, config_overrides=sso_cfg)
+    # Target Rich (Injection): hotspots generating huge time-limited burst demands
+    burst_events = [
+        {'start': 5000, 'duration': 300, 'extra_demand_ips': 150.0},
+        {'start': 25000, 'duration': 400, 'extra_demand_ips': 200.0},
+        {'start': 60000, 'duration': 300, 'extra_demand_ips': 250.0},
+    ]
+    sim_sso.run_case_study("SSO_03_Target_Rich", config_overrides=sso_cfg, events=burst_events)
+
+    # TODO: Numerical metric for why A125D06 keeps winning - not corrinf/s not corrinf/J. It's maximally accurate but if it took an
+    # hour it'd lose. So why does it win? 
+
+    # deadline horizontal line on eff plot - cuts out different models on left and right
+    # this should come from reasonable selection of the camera/battery properties.
+
+    # keep time horizon at one for right now. 
 
 if __name__ == "__main__":
     run_all_case_studies()
