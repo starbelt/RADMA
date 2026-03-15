@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from collections import deque
 import sys
 import os
 
@@ -14,14 +13,6 @@ try:
     ROOT_DIR = get_repo_root()
 except ImportError:
     ROOT_DIR = Path(".").resolve()
-
-class FrameJob:
-    def __init__(self, job_id, total_inferences, timestamp):
-        self.id = job_id
-        self.total_inferences = total_inferences
-        self.remaining_inferences = total_inferences
-        self.timestamp = timestamp
-        self.assigned_model = None 
 
 class ContinuousSatSim:
     BASE_SYSTEM = {
@@ -42,9 +33,7 @@ class ContinuousSatSim:
         'compute_disable_pct': 0.45,
         
         'budget_horizon_frames': 1000.0,
-        'enforce_clearing': False,
         'eclipse_illumination_pct': 0.05, 
-        'buffer_max_frames': 15,          
     }
 
     @staticmethod
@@ -56,7 +45,6 @@ class ContinuousSatSim:
             'solar_generation_mw': 1500.0, 
             'alt_threshold_km': 5000.0,    
             'low_alt_target_km': 0.5,      
-            'buffer_max_frames': 25000     
         })
         return cfg
 
@@ -67,7 +55,6 @@ class ContinuousSatSim:
             'focal_length_mm': 85.0,
             'battery_capacity_wh': 1.5,
             'solar_generation_mw': 600.0, 
-            'buffer_max_frames': 5000,
         })
         return cfg
 
@@ -99,11 +86,9 @@ class ContinuousSatSim:
         return df
 
     def _select_model(self, energy_budget_j, time_budget_s, total_inferences):
-        # bounce out if resources are drained
         if energy_budget_j <= 0 or time_budget_s <= 0: 
             return None, "depleted"
         
-        # calc max inferences possible given strict time and energy budgets
         max_time_infs = time_budget_s / self.models['lat_s']
         max_eng_infs = energy_budget_j / self.models['eng_j']
         
@@ -114,17 +99,11 @@ class ContinuousSatSim:
             capable_models = self.models[clearing_mask].copy()
             best_idx = capable_models['acc_decimal'].idxmax()
             return capable_models.loc[best_idx], "clears_frame"
-            
         else:
             expected_correct = infs_possible * self.models['acc_decimal']
             best_idx = expected_correct.idxmax()
             best_model = self.models.loc[best_idx]
-            
-            lim_time = max_time_infs[best_idx]
-            lim_eng = max_eng_infs[best_idx]
-            reason = "partial_frame_energy" if lim_eng < lim_time else "partial_frame_time"
-            
-            return best_model, reason
+            return best_model, "partial_frame"
 
     def run_case_study(self, case_name, config_overrides=None, events=None):
         if self.raw_orbit.empty: return
@@ -135,12 +114,6 @@ class ContinuousSatSim:
         
         sim_data = interpolate_orbit(self.raw_orbit, self.sunlight_intervals, cfg['sim_dt_s'], cfg)
         if sim_data.empty: return
-
-        # calc orbital baseline budget for smoother energy allocation
-        total_lit_time = sum(end - start for start, end in self.sunlight_intervals)
-        expected_solar_j = (cfg['solar_generation_mw'] / 1000.0) * total_lit_time
-        expected_frames_per_orbit = len(sim_data[sim_data['demand_infs_per_sec'] > 0])
-        baseline_energy_per_frame_j = expected_solar_j / max(1, expected_frames_per_orbit)
 
         naive_configs = {
             'High_Accuracy': self.models.loc[self.models['acc_decimal'].idxmax()],
@@ -157,7 +130,6 @@ class ContinuousSatSim:
             naive_states[name] = {
                 'battery_j': BATTERY_CAPACITY_J * cfg['initial_charge_pct'],
                 'recharging': False,
-                'buffer': deque(),
                 'total_correct': 0.0,
                 'model': model,
                 'power_w': model['eng_j'] / model['lat_s'],
@@ -167,13 +139,18 @@ class ContinuousSatSim:
             }
 
         current_battery_j = BATTERY_CAPACITY_J * cfg['initial_charge_pct']
-        frame_buffer = deque() 
-        current_job = None 
         total_infs_correct = 0
 
-        report_stats = {'time_limited_count': 0, 'energy_limited_count': 0, 'buffered_count': 0, 'unprocessed_count': 0, 'total_steps': len(sim_data)}
+        report_stats = {
+            'total_demand_infs': 0.0,
+            'dropped_power_infs': 0.0, 
+            'dropped_time_infs': 0.0,
+            'dropped_energy_infs': 0.0,
+            'processed_infs': 0.0
+        }
+        
         logs = {
-            'time_rel': [], 'battery_wh': [], 'buffer_count': [], 
+            'time_rel': [], 'battery_wh': [],
             'throughput_infs': [], 'backlog_infs': [], 'model_name': [],
             'avg_accuracy': [], 'active_power_w': [], 'is_lit': [], 
             'demand_infs': [], 'alt_km': [], 'speed_km_s': [], 'cum_correct': [],
@@ -205,89 +182,60 @@ class ContinuousSatSim:
             env_energy_j = (solar_w - base_w) * dt 
             
             infs_for_this_second = (row['demand_infs_per_sec'] + extra_demand_ips) * dt
-            buffered_this_step = False
-            
-            if infs_for_this_second <= 0.0:
-                active_model_name = "Blind" 
-                report_stats['unprocessed_count'] += 1 
-            else:
-                active_model_name = "Idle"
-                if len(frame_buffer) < cfg['buffer_max_frames']:
-                    frame_job = FrameJob(i, infs_for_this_second, t_rel)
-                    frame_buffer.append(frame_job)
-                    buffered_this_step = True
-                    
-                    for ns in naive_states.values():
-                        if len(ns['buffer']) < cfg['buffer_max_frames']:
-                            ns['buffer'].append(FrameJob(i, infs_for_this_second, t_rel))
-                else:
-                    report_stats['unprocessed_count'] += 1
-            
-            if buffered_this_step and len(frame_buffer) > 1:
-                report_stats['buffered_count'] += 1
+            report_stats['total_demand_infs'] += infs_for_this_second
 
-            # smoothed energy budget calculation 
+            n = cfg['budget_horizon_frames']
             surplus_j = max(0.0, current_battery_j - limit_disable_j)
-            step_energy_budget_j = min(baseline_energy_per_frame_j + (surplus_j * 0.05), surplus_j)
+            battery_alloc_j = surplus_j / n if n > 1e-6 else surplus_j
+            step_energy_budget_j = min(battery_alloc_j + (solar_w * dt), surplus_j)
 
-            time_available_s = dt
             processed_infs_step = 0
             processing_energy_j = 0
             current_accuracy = 0.0
-            step_limitation = None 
+            active_model_name = "Idle"
 
             if current_battery_j < limit_disable_j:
                 dynamic_recharging = True
             elif dynamic_recharging and current_battery_j > limit_enable_j:
                 dynamic_recharging = False
 
-            while time_available_s > 0:
-                if cpu_blocked: active_model_name = "BLOCKED"; break
-                if dynamic_recharging or step_energy_budget_j <= 1e-6: 
+            if infs_for_this_second > 0:
+                if cpu_blocked:
+                    active_model_name = "BLOCKED"
+                    report_stats['dropped_power_infs'] += infs_for_this_second
+                elif dynamic_recharging or step_energy_budget_j <= 1e-6:
                     active_model_name = "RECHARGE"
-                    break
-                
-                if current_job is None:
-                    if len(frame_buffer) > 0:
-                        current_job = frame_buffer.popleft()
-                        total_workload = current_job.remaining_inferences + sum(j.remaining_inferences for j in frame_buffer)
-                        
-                        model, reason = self._select_model(step_energy_budget_j, time_available_s, total_workload)
-                        
-                        if reason == "partial_frame_time": step_limitation = "time"
-                        elif reason == "partial_frame_energy": step_limitation = "energy"
-                        
-                        if model is None: 
-                            frame_buffer.appendleft(current_job)
-                            current_job = None
-                            active_model_name = "RECHARGE"
-                            break
-                        current_job.assigned_model = model
-                    else: break
-                
-                if current_job:
-                    model = current_job.assigned_model
-                    active_model_name = model['Model name']
-                    current_accuracy = model['acc_decimal']
+                    report_stats['dropped_power_infs'] += infs_for_this_second
+                else:
+                    model, reason = self._select_model(step_energy_budget_j, dt, infs_for_this_second)
                     
-                    infs_possible = min(current_job.remaining_inferences, time_available_s / model['lat_s'], step_energy_budget_j / model['eng_j'])
-                    if infs_possible <= 0: active_model_name = "RECHARGE"; break
+                    if model is None:
+                        active_model_name = "RECHARGE"
+                        report_stats['dropped_power_infs'] += infs_for_this_second
+                    else:
+                        active_model_name = model['Model name']
+                        current_accuracy = model['acc_decimal']
+                        
+                        max_t_infs = dt / model['lat_s']
+                        max_e_infs = step_energy_budget_j / model['eng_j']
+                        
+                        infs_possible = min(infs_for_this_second, max_t_infs, max_e_infs)
+                        processed_infs_step = infs_possible
+                        dropped = infs_for_this_second - infs_possible
+                        
+                        if dropped > 0:
+                            if max_t_infs < max_e_infs and max_t_infs < infs_for_this_second:
+                                report_stats['dropped_time_infs'] += dropped
+                            else:
+                                report_stats['dropped_energy_infs'] += dropped
+                                
+                        e_spent = processed_infs_step * model['eng_j']
+                        processing_energy_j += e_spent
+                        current_battery_j -= e_spent
+            else:
+                active_model_name = "Blind"
 
-                    current_job.remaining_inferences -= infs_possible
-                    e_spent = infs_possible * model['eng_j']
-                    t_spent = infs_possible * model['lat_s']
-                    
-                    current_battery_j -= e_spent
-                    step_energy_budget_j -= e_spent
-                    time_available_s -= t_spent
-                    processed_infs_step += infs_possible
-                    processing_energy_j += e_spent
-                    
-                    if current_job.remaining_inferences <= 1e-6: current_job = None
-
-            if step_limitation == "time": report_stats['time_limited_count'] += 1
-            elif step_limitation == "energy": report_stats['energy_limited_count'] += 1
-            
+            report_stats['processed_infs'] += processed_infs_step
             total_load_w = base_w + (processing_energy_j / dt)
             current_battery_j = np.clip(current_battery_j + env_energy_j, 0, BATTERY_CAPACITY_J)
             total_infs_correct += processed_infs_step * current_accuracy
@@ -309,29 +257,17 @@ class ContinuousSatSim:
                     
                     ns['battery_j'] -= (time_runnable_s * ns['power_w'])
                     potential_infs = time_runnable_s * ns['ips']
-                    
-                    processed_naive_infs = 0
-                    while potential_infs > 0 and len(ns['buffer']) > 0:
-                        job = ns['buffer'][0]
-                        taken = min(potential_infs, job.remaining_inferences)
-                        job.remaining_inferences -= taken
-                        potential_infs -= taken
-                        processed_naive_infs += taken
-                        if job.remaining_inferences <= 1e-6: ns['buffer'].popleft()
+                    taken = min(potential_infs, infs_for_this_second)
                     
                     ns['battery_j'] = np.clip(ns['battery_j'] + env_energy_j, 0, BATTERY_CAPACITY_J)
-                    ns['total_correct'] += processed_naive_infs * ns['model']['acc_decimal']
+                    ns['total_correct'] += taken * ns['model']['acc_decimal']
                 
                 ns['logs_battery_wh'].append(ns['battery_j'] / 3600.0)
                 ns['logs_cum_correct'].append(ns['total_correct'])
             
-            buffer_backlog = sum(j.remaining_inferences for j in frame_buffer)
-            if current_job: buffer_backlog += current_job.remaining_inferences
-
             logs['time_rel'].append(t_rel)
             logs['battery_wh'].append(current_battery_j / 3600.0)
-            logs['buffer_count'].append(len(frame_buffer))
-            logs['backlog_infs'].append(buffer_backlog)
+            logs['backlog_infs'].append(0)
             logs['throughput_infs'].append(processed_infs_step)
             logs['model_name'].append(active_model_name)
             logs['avg_accuracy'].append(current_accuracy if processed_infs_step > 0 else np.nan)
@@ -343,20 +279,76 @@ class ContinuousSatSim:
             logs['dwell_time_s'].append(row['dwell_time_s'])
             logs['cum_correct'].append(total_infs_correct)
 
+        self._print_verbose_report(case_name, report_stats, logs, sim_data, cfg, naive_states)
+        
         plot_orbit_dynamics(logs, case_name, self.output_dir)
         plot_telemetry(logs, case_name, cfg, self.output_dir)
         plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         
         return logs
 
+    def _print_verbose_report(self, case_name, stats, logs, sim_data, cfg, naive_states=None):
+        print(f"\n{'='*60}")
+        print(f"case report: {case_name}")
+        print(f"{'='*60}")
+        
+        best_throughput = self.models.loc[self.models['correct_infs_per_sec'].idxmax()]
+        best_efficiency = self.models.loc[self.models['correct_infs_per_joule'].idxmax()]
+        best_acc = self.models.loc[self.models['acc_decimal'].idxmax()]
+        
+        print("model landscape:")
+        print(f"  * highest throughput: {best_throughput['Model name']:<20} ({best_throughput['correct_infs_per_sec']:.1f} correct inf/s)")
+        print(f"  * best efficiency:    {best_efficiency['Model name']:<20} ({best_efficiency['correct_infs_per_joule']:.1f} correct inf/j)")
+        print(f"  * max accuracy:       {best_acc['Model name']:<20} ({best_acc['acc_decimal']*100:.1f}%)")
+        print("-" * 60)
+        
+        total_demand = stats['total_demand_infs']
+        print("inference processing statistics:")
+        if total_demand > 0:
+            print(f"  * total demand:          {total_demand:,.0f} infs")
+            print(f"  * processed:             {stats['processed_infs']:,.0f} ({stats['processed_infs']/total_demand*100:5.1f}%)")
+            print(f"  * dropped (power lock):  {stats['dropped_power_infs']:,.0f} ({stats['dropped_power_infs']/total_demand*100:5.1f}%)")
+            print(f"  * dropped (time limit):  {stats['dropped_time_infs']:,.0f} ({stats['dropped_time_infs']/total_demand*100:5.1f}%)")
+            print(f"  * dropped (eng limit):   {stats['dropped_energy_infs']:,.0f} ({stats['dropped_energy_infs']/total_demand*100:5.1f}%)")
+        print("-" * 60)
+
+        if naive_states:
+            print("dynamic vs naive performance gain:")
+            dynamic_total = logs['cum_correct'][-1] if logs['cum_correct'] else 0
+            
+            for name, ns in naive_states.items():
+                clean_name = name.replace('_', ' ').lower()
+                naive_total = ns['total_correct']
+                if naive_total > 0:
+                    gain_pct = ((dynamic_total - naive_total) / naive_total) * 100.0
+                    print(f"  * vs {clean_name:<20}: +{gain_pct:.1f}%")
+                else:
+                    print(f"  * vs {clean_name:<20}: +inf% (baseline scored 0)")
+                    
+        print(f"{'='*60}\n")
+
+        print("model utilization (% of active processing time):")
+        df_log = pd.DataFrame({'model': logs['model_name']})
+        compute_models = df_log[~df_log['model'].str.lower().isin(['idle', 'recharge', 'blocked', 'blind'])] 
+        
+        if not compute_models.empty:
+            breakdown = compute_models['model'].value_counts(normalize=True) * 100
+            for name, pct in breakdown.items():
+                print(f"  * {name:<30}: {pct:5.1f}%")
+        else:
+            print("  (no models executed)")
+        print(f"{'='*60}\n")
+
 if __name__ == "__main__":
     model_json = ROOT_DIR / "data/compiled_characterization.json" 
     orbit_path = ROOT_DIR / "data/stk"
     out_dir = ROOT_DIR / "results/case_studies"
 
-    # sim_heo = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='HEO', num_orbits=1)
-    # sim_heo.run_case_study("HEO_01_Standard", config_overrides=ContinuousSatSim.get_heo_config())
-    
     sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=20)
     sso_cfg = ContinuousSatSim.get_sso_config()
-    sim_sso.run_case_study("SSO_01_Standard", config_overrides=sso_cfg)
+    
+
+    burst_events = [
+        {'start': 5000, 'duration': 300, 'extra_demand_ips': 80.0}, # Target Rich (Time Limit forced)
+    ]
+    sim_sso.run_case_study("SSO_01_Standard", config_overrides=sso_cfg, events=None)
