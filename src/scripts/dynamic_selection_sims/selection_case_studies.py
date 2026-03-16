@@ -19,7 +19,7 @@ class ContinuousSatSim:
         'pixel_pitch_um': 3.45,
         'sensor_res': 4096,
         'tpu_dim': 224,
-        'system_baseload_mw': 300.0,
+        'system_baseload_mw': 200.0,
         'sim_dt_s': 1.0,
         
         'alt_threshold_km': 2000.0,
@@ -29,11 +29,15 @@ class ContinuousSatSim:
         'high_alt_min_px': 2,        
         
         'initial_charge_pct': 0.85,
-        'compute_enable_pct': 0.70,
+        'compute_enable_pct': 0.65,
         'compute_disable_pct': 0.45,
         
         'budget_horizon_frames': 1000.0,
         'eclipse_illumination_pct': 0.05, 
+        
+        # set hard barriers to filter out risky models
+        'hard_min_infs': 0.0,
+        'hard_min_infj': 0.0,
     }
 
     @staticmethod
@@ -85,24 +89,26 @@ class ContinuousSatSim:
         
         return df
 
-    def _select_model(self, energy_budget_j, time_budget_s, total_inferences):
+    def _select_model(self, viable_models, energy_budget_j, time_budget_s, total_inferences):
+        # bounce out if resources are drained
         if energy_budget_j <= 0 or time_budget_s <= 0: 
             return None, "depleted"
         
-        max_time_infs = time_budget_s / self.models['lat_s']
-        max_eng_infs = energy_budget_j / self.models['eng_j']
+        # calc max possible inferences
+        max_time_infs = time_budget_s / viable_models['lat_s']
+        max_eng_infs = energy_budget_j / viable_models['eng_j']
         
         infs_possible = np.minimum(max_time_infs, max_eng_infs)
         clearing_mask = infs_possible >= total_inferences
         
         if clearing_mask.any():
-            capable_models = self.models[clearing_mask].copy()
+            capable_models = viable_models[clearing_mask].copy()
             best_idx = capable_models['acc_decimal'].idxmax()
             return capable_models.loc[best_idx], "clears_frame"
         else:
-            expected_correct = infs_possible * self.models['acc_decimal']
+            expected_correct = infs_possible * viable_models['acc_decimal']
             best_idx = expected_correct.idxmax()
-            best_model = self.models.loc[best_idx]
+            best_model = viable_models.loc[best_idx]
             return best_model, "partial_frame"
 
     def run_case_study(self, case_name, config_overrides=None, events=None):
@@ -112,13 +118,24 @@ class ContinuousSatSim:
         cfg = self.BASE_SYSTEM.copy()
         if config_overrides: cfg.update(config_overrides)
         
+        # drop models that fall below the hard limits
+        viable_models = self.models[
+            ((1.0 / self.models['lat_s']) >= cfg['hard_min_infs']) &
+            (self.models['correct_infs_per_joule'] >= cfg['hard_min_infj'])
+        ].copy()
+
+        if viable_models.empty:
+            print("[error] no models meet the hard barriers. check your config.")
+            return
+
         sim_data = interpolate_orbit(self.raw_orbit, self.sunlight_intervals, cfg['sim_dt_s'], cfg)
         if sim_data.empty: return
 
+        # base baselines off the filtered models
         naive_configs = {
-            'High_Accuracy': self.models.loc[self.models['acc_decimal'].idxmax()],
-            'High_Throughput': self.models.loc[self.models['correct_infs_per_sec'].idxmax()],
-            'High_Efficiency': self.models.loc[self.models['correct_infs_per_joule'].idxmax()]
+            'High_Accuracy': viable_models.loc[viable_models['acc_decimal'].idxmax()],
+            'High_Throughput': viable_models.loc[viable_models['correct_infs_per_sec'].idxmax()],
+            'High_Efficiency': viable_models.loc[viable_models['correct_infs_per_joule'].idxmax()]
         }
 
         BATTERY_CAPACITY_J = cfg['battery_capacity_wh'] * 3600.0
@@ -187,7 +204,11 @@ class ContinuousSatSim:
             n = cfg['budget_horizon_frames']
             surplus_j = max(0.0, current_battery_j - limit_disable_j)
             battery_alloc_j = surplus_j / n if n > 1e-6 else surplus_j
-            step_energy_budget_j = min(battery_alloc_j + (solar_w * dt), surplus_j)
+            # calculate net power (can be negative if drain is high)
+            net_power_w = solar_w - base_w
+            # if net power is negative, we only have our battery allocation
+            step_incoming_j = max(0.0, net_power_w * dt)
+            step_energy_budget_j = min(battery_alloc_j + step_incoming_j, surplus_j)
 
             processed_infs_step = 0
             processing_energy_j = 0
@@ -207,7 +228,7 @@ class ContinuousSatSim:
                     active_model_name = "RECHARGE"
                     report_stats['dropped_power_infs'] += infs_for_this_second
                 else:
-                    model, reason = self._select_model(step_energy_budget_j, dt, infs_for_this_second)
+                    model, reason = self._select_model(viable_models, step_energy_budget_j, dt, infs_for_this_second)
                     
                     if model is None:
                         active_model_name = "RECHARGE"
@@ -344,11 +365,74 @@ if __name__ == "__main__":
     orbit_path = ROOT_DIR / "data/stk"
     out_dir = ROOT_DIR / "results/case_studies"
 
-    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=20)
+    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=5)
     sso_cfg = ContinuousSatSim.get_sso_config()
     
+    # ========================================================================
+    # case 1: the baseline (goldilocks zone)
+    # value: establishes the nominal performance of the system.
+    # expectation: the system should spend the vast majority of its time 
+    # running the most accurate model (grid a1.25 d06), only downshifting 
+    # slightly when the battery naturally dips during eclipse transitions.
+    # ========================================================================
+    sim_sso.run_case_study("SSO_01_Baseline", config_overrides=sso_cfg, events=None)
 
+    # ========================================================================
+    # case 2: the time crunch (target-rich burst)
+    # value: tests the dynamic selector's ability to abandon slow, highly 
+    # accurate models to prevent massive frame drops due to time limits.
+    # expectation: during the 300s bursts, demand spikes by 80 inf/s. the 
+    # heavy model is too slow. the system should instantly pivot to a high 
+    # throughput model to clear the frame and maximize raw yield.
+    # ========================================================================
     burst_events = [
-        {'start': 5000, 'duration': 300, 'extra_demand_ips': 80.0}, # Target Rich (Time Limit forced)
+        {'start': 5000, 'duration': 300, 'extra_demand_ips': 80.0},
+        {'start': 25000, 'duration': 300, 'extra_demand_ips': 80.0},
+        {'start': 60000, 'duration': 300, 'extra_demand_ips': 80.0},
     ]
-    sim_sso.run_case_study("SSO_01_Standard", config_overrides=sso_cfg, events=None)
+    sim_sso.run_case_study("SSO_02_Time_Crunch", config_overrides=sso_cfg, events=burst_events)
+
+    # ========================================================================
+    # case 3: the power starvation (heavy comms drain)
+    # value: tests energy-awareness and hysteresis survival. edge systems 
+    # often share power with radios.
+    # expectation: an extra 0.5w draw is massive for this picosatellite. 
+    # the energy budget will shrink rapidly. the system must pivot to the 
+    # absolute most energy-efficient models to stretch the battery and avoid 
+    # hitting the 45% shutoff lock.
+    # ========================================================================
+    drain_events = [
+        {'start': 10000, 'duration': 1500, 'power_w': 0.5}, # 25 min heavy downlink
+        {'start': 45000, 'duration': 1500, 'power_w': 0.5},
+    ]
+    sim_sso.run_case_study("SSO_03_Power_Starved", config_overrides=sso_cfg, events=drain_events)
+
+    # ========================================================================
+    # case 4: strict mission requirements (hard barriers)
+    # value: validates the new filtering logic. simulates a strict mission 
+    # constraint where a baseline speed is mandatory regardless of accuracy.
+    # expectation: we set a floor of 70 inf/s. grid a1.25 d06 (max ~68 inf/s) 
+    # is legally banned from the trade space. the dynamic selector and the 
+    # naive baselines will now be forced to operate within the faster, 
+    # slightly less accurate subset of models.
+    # ========================================================================
+    strict_cfg = sso_cfg.copy()
+    strict_cfg['hard_min_infs'] = 70.0 
+    sim_sso.run_case_study("SSO_04_Strict_Limits", config_overrides=strict_cfg, events=None)
+
+    # ========================================================================
+    # case 5: the perfect storm (combined stress)
+    # value: the ultimate stress test. evaluates if the dynamic system can 
+    # still out-maneuver the naive baselines when boxed in by strict rules 
+    # and severe environmental penalties simultaneously.
+    # expectation: hard limits apply. a data burst hits right in the middle 
+    # of a heavy comms drain. significant frame drops are unavoidable, but 
+    # the dynamic system should gracefully degrade to the absolute fastest 
+    # and cheapest models to out-score the static baselines.
+    # ========================================================================
+    storm_events = [
+        {'start': 30000, 'duration': 2000, 'power_w': 0.4},                     # long comms drain
+        {'start': 31000, 'duration': 500, 'extra_demand_ips': 100.0},           # massive data spike during drain
+        {'start': 31500, 'duration': 100, 'power_w': 0.0, 'blocked': True},     # cpu blocked by image transfer
+    ]
+    sim_sso.run_case_study("SSO_05_Perfect_Storm", config_overrides=strict_cfg, events=storm_events)
