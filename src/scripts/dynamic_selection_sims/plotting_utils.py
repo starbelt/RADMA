@@ -4,16 +4,133 @@ import pandas as pd
 
 def set_plot_style():
     plt.rcParams.update({
-        'font.size': 16,
-        'axes.titlesize': 20,
-        'axes.labelsize': 18,
-        'xtick.labelsize': 14,
-        'ytick.labelsize': 14,
-        'legend.fontsize': 14,
-        'lines.linewidth': 3.0,
-        'figure.titlesize': 24,
+        'font.size': 14,
+        'axes.titlesize': 18,
+        'axes.labelsize': 16,
+        'xtick.labelsize': 12,
+        'ytick.labelsize': 12,
+        'legend.fontsize': 12,
+        'lines.linewidth': 2.5,
+        'figure.titlesize': 20,
         'figure.titleweight': 'bold'
     })
+
+
+def _get_model_colors(model_names):
+    """Assigns consistent colors to models, forcing non-compute states to grey."""
+    unique_models = list(dict.fromkeys(model_names))
+    cmap = plt.get_cmap('tab20')
+    color_dict = {}
+    
+    color_idx = 0
+    for m in unique_models:
+        if m in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']:
+            color_dict[m] = '#d3d3d3' # light grey for inactive states
+        else:
+            color_dict[m] = cmap(color_idx % 20)
+            color_idx += 1
+    return color_dict
+
+def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="Cumulative Yield"):
+    """Plots a single continuous line, changing colors based on the category array."""
+    start_idx = 0
+    seen_labels = set()
+    handles, labels = [], []
+    
+    for i in range(1, len(categories)):
+        # check if category changed or if we are at the end of the array
+        if categories[i] != categories[i-1] or i == len(categories) - 1:
+            # overlap by 1 index so the lines connect seamlessly without gaps
+            end_idx = i + 1 if i < len(categories) - 1 else i + 1
+            
+            current_cat = categories[start_idx]
+            
+            # only add to legend if it's a compute model we haven't labeled yet
+            label = None
+            if current_cat not in seen_labels and current_cat not in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']:
+                label = current_cat
+                seen_labels.add(current_cat)
+                
+            line, = ax.plot(t[start_idx:end_idx], y[start_idx:end_idx], 
+                    color=color_dict[current_cat], linewidth=3.5, label=label)
+            
+            if label:
+                handles.append(line)
+                labels.append(label)
+                
+            start_idx = i
+            
+    ax.set_ylabel(ylabel, color='tab:blue')
+    ax.tick_params(axis='y', labelcolor='tab:blue')
+    
+    return handles, labels
+
+
+def plot_telemetry(logs, case_name, cfg, output_dir):
+    set_plot_style()
+    clean_name = case_name.replace('_', ' ')
+    t_plot = np.array(logs['time_rel'])
+    
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True, gridspec_kw={'hspace': 0.15})
+    
+    # bump the title up to make room for the floating legend
+    fig.suptitle(f"case study telemetry: {clean_name}", y=1.05) 
+
+    # orbit dynamics
+    ax1.plot(t_plot, logs['alt_km'], color='dimgray', label='altitude')
+    ax1.set_ylabel('altitude (km)')
+    
+    # calc dynamic padding for altitude so it scales cleanly
+    alt_span = np.max(logs['alt_km']) - np.min(logs['alt_km'])
+    if alt_span == 0: alt_span = np.max(logs['alt_km']) * 0.1 
+    ax1.set_ylim(np.min(logs['alt_km']) - (0.1 * alt_span), np.max(logs['alt_km']) + (0.1 * alt_span))
+    
+    ax1_t = ax1.twinx()
+    ax1_t.plot(t_plot, logs['speed_km_s'], color='tab:red', linestyle='--', alpha=0.7, label='ground speed')
+    ax1_t.set_ylabel('speed (km/s)', color='tab:red')
+    
+    # copy the exact same 10% padding logic for speed
+    spd_span = np.max(logs['speed_km_s']) - np.min(logs['speed_km_s'])
+    if spd_span == 0: spd_span = np.max(logs['speed_km_s']) * 0.1
+    ax1_t.set_ylim(np.min(logs['speed_km_s']) - (0.1 * spd_span), np.max(logs['speed_km_s']) + (0.1 * spd_span))
+    
+    # float the legend above the top axis, spread across 2 columns
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    lines_2, labels_2 = ax1_t.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='lower center', 
+            bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
+    ax1.grid(True, alpha=0.3)
+
+    # combined energy & yield
+    ax2.plot(t_plot, logs['battery_wh'], color='tab:green', linewidth=3, label='battery charge')
+    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', label='hard lock limit')
+    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='tab:green', linestyle=':', label='resume limit')
+    
+    lit = np.array(logs['is_lit'])
+    ax2.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax2.get_xaxis_transform(), 
+                    color='gold', alpha=0.15, label='sunlight interval')
+    
+    ax2.set_ylabel('battery (wh)')
+    ax2.set_xlabel('mission time (s)')
+    ax2.grid(True, alpha=0.3)
+    
+    # keep the battery legend tucked top-left inside the plot
+    ax2.legend(loc='upper left', frameon=True, framealpha=0.85, bbox_to_anchor=(0.02, 0.98))
+
+    # segmented yield on right axis
+    ax2_t = ax2.twinx()
+    color_dict = _get_model_colors(logs['model_name'])
+    handles, labels = _plot_segmented_line(ax2_t, t_plot, logs['cum_correct'], logs['model_name'], color_dict, ylabel="cumulative correct inferences")
+    
+    # model legend below x-axis
+    if handles:
+        ncol = min(4, len(labels))
+        ax2_t.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.15), 
+                    ncol=ncol, frameon=False, title="active processing models")
+        
+    save_path = output_dir / f"{case_name}_telemetry.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
 
 def plot_orbit_dynamics(logs, case_name, output_dir):
     set_plot_style()
@@ -54,73 +171,6 @@ def plot_orbit_dynamics(logs, case_name, output_dir):
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     save_path = output_dir / f"{case_name}_orbit_dynamics.png"
-    plt.savefig(save_path, dpi=300)
-    plt.close()
-
-def plot_telemetry(logs, case_name, cfg, output_dir):
-    set_plot_style()
-    clean_name = case_name.replace('_', ' ')
-    t_plot = np.array(logs['time_rel'])
-    
-    fig = plt.figure(figsize=(14, 18))
-    gs = fig.add_gridspec(4, 1, height_ratios=[1, 1.5, 1.5, 1], hspace=0.3)
-    fig.suptitle(f"case study: {clean_name}\ndynamic telemetry", y=0.98)
-
-    ax1 = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1], sharex=ax1)
-    ax3 = fig.add_subplot(gs[2], sharex=ax1)
-    ax4 = fig.add_subplot(gs[3])
-
-    ax1.plot(t_plot, logs['alt_km'], color='gray', label='altitude')
-    ax1.set_ylabel('altitude (km)')
-    
-    ax1_t = ax1.twinx()
-    ax1_t.plot(t_plot, logs['speed_km_s'], 'r--', label='speed')
-    ax1_t.set_ylabel('speed (km/s)', color='r')
-    
-    lines_1, labels_1 = ax1.get_legend_handles_labels()
-    lines_2, labels_2 = ax1_t.get_legend_handles_labels()
-    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
-    ax1.grid(True, alpha=0.3)
-    plt.setp(ax1.get_xticklabels(), visible=False)
-
-    ax2.plot(t_plot, logs['battery_wh'], 'g', label='dynamic battery')
-    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='r', linestyle=':', label='hard min (shutoff)')
-    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='g', linestyle=':', label='ref resume')
-    
-    lit = np.array(logs['is_lit'])
-    ax2.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax2.get_xaxis_transform(), color='gold', alpha=0.2, label='sunlight')
-    ax2.set_ylabel('battery (wh)')
-    ax2.legend(loc='upper left')
-    ax2.grid(True, alpha=0.3)
-    plt.setp(ax2.get_xticklabels(), visible=False)
-
-    ax3.plot(t_plot, logs['cum_correct'], 'k', label='dynamic correct infs')
-    ax3.set_ylabel('total correct inferences')
-    ax3.legend(loc='upper left')
-    ax3.grid(True, alpha=0.3)
-    
-    ax3_t = ax3.twinx()
-    ax3_t.fill_between(t_plot, logs['backlog_infs'], color='tab:orange', alpha=0.15, label='backlog')
-    ax3_t.plot(t_plot, logs['backlog_infs'], color='tab:orange', linewidth=1.5, alpha=0.6)
-    ax3_t.set_ylabel('dynamic backlog size', color='tab:orange')
-    ax3_t.tick_params(axis='y', labelcolor='tab:orange')
-    ax3.set_xlabel('time (s)')
-
-    df_log = pd.DataFrame({'model': logs['model_name'], 'infs': logs['throughput_infs']})
-    stats = df_log[df_log['infs'] > 0].groupby('model')['infs'].sum().sort_values()
-    
-    if not stats.empty:
-        bars = ax4.barh(stats.index, stats.values, color='tab:purple')
-        ax4.bar_label(bars, fmt='{:,.0f}', padding=5, fontsize=12)
-    else:
-        ax4.text(0.5, 0.5, "no inferences performed", ha='center', va='center', fontsize=16)
-    
-    ax4.set_xlabel('total inferences processed')
-    ax4.grid(True, axis='x', alpha=0.3)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    save_path = output_dir / f"{case_name}.png"
     plt.savefig(save_path, dpi=300)
     plt.close()
 
