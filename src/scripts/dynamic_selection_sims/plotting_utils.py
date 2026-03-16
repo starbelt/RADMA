@@ -15,9 +15,8 @@ def set_plot_style():
         'figure.titleweight': 'bold'
     })
 
-
 def _get_model_colors(model_names):
-    """Assigns consistent colors to models, forcing non-compute states to grey."""
+    # assigns consistent colors to models, forcing non-compute states to grey
     unique_models = list(dict.fromkeys(model_names))
     cmap = plt.get_cmap('tab20')
     color_dict = {}
@@ -25,27 +24,23 @@ def _get_model_colors(model_names):
     color_idx = 0
     for m in unique_models:
         if m in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']:
-            color_dict[m] = '#d3d3d3' # light grey for inactive states
+            color_dict[m] = '#d3d3d3' 
         else:
             color_dict[m] = cmap(color_idx % 20)
             color_idx += 1
     return color_dict
 
-def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="Cumulative Yield"):
-    """Plots a single continuous line, changing colors based on the category array."""
+def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="cumulative yield"):
+    # plots a single continuous line, changing colors based on the category array
     start_idx = 0
     seen_labels = set()
     handles, labels = [], []
     
     for i in range(1, len(categories)):
-        # check if category changed or if we are at the end of the array
         if categories[i] != categories[i-1] or i == len(categories) - 1:
-            # overlap by 1 index so the lines connect seamlessly without gaps
             end_idx = i + 1 if i < len(categories) - 1 else i + 1
-            
             current_cat = categories[start_idx]
             
-            # only add to legend if it's a compute model we haven't labeled yet
             label = None
             if current_cat not in seen_labels and current_cat not in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']:
                 label = current_cat
@@ -66,21 +61,23 @@ def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="Cumulative Yi
     return handles, labels
 
 
-def plot_telemetry(logs, case_name, cfg, output_dir):
+def plot_mission(logs, naive_states, case_name, cfg, output_dir, 
+                        plot_accuracy_baseline=False, 
+                        plot_efficiency_baseline=False, 
+                        plot_throughput_baseline=False):
     set_plot_style()
     clean_name = case_name.replace('_', ' ')
     t_plot = np.array(logs['time_rel'])
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True, gridspec_kw={'hspace': 0.15})
     
-    # bump the title up to make room for the floating legend
+    # bump title up to make room for floating legend
     fig.suptitle(f"case study telemetry: {clean_name}", y=1.05) 
 
     # orbit dynamics
     ax1.plot(t_plot, logs['alt_km'], color='dimgray', label='altitude')
     ax1.set_ylabel('altitude (km)')
     
-    # calc dynamic padding for altitude so it scales cleanly
     alt_span = np.max(logs['alt_km']) - np.min(logs['alt_km'])
     if alt_span == 0: alt_span = np.max(logs['alt_km']) * 0.1 
     ax1.set_ylim(np.min(logs['alt_km']) - (0.1 * alt_span), np.max(logs['alt_km']) + (0.1 * alt_span))
@@ -89,12 +86,10 @@ def plot_telemetry(logs, case_name, cfg, output_dir):
     ax1_t.plot(t_plot, logs['speed_km_s'], color='tab:red', linestyle='--', alpha=0.7, label='ground speed')
     ax1_t.set_ylabel('speed (km/s)', color='tab:red')
     
-    # copy the exact same 10% padding logic for speed
     spd_span = np.max(logs['speed_km_s']) - np.min(logs['speed_km_s'])
     if spd_span == 0: spd_span = np.max(logs['speed_km_s']) * 0.1
     ax1_t.set_ylim(np.min(logs['speed_km_s']) - (0.1 * spd_span), np.max(logs['speed_km_s']) + (0.1 * spd_span))
     
-    # float the legend above the top axis, spread across 2 columns
     lines_1, labels_1 = ax1.get_legend_handles_labels()
     lines_2, labels_2 = ax1_t.get_legend_handles_labels()
     ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='lower center', 
@@ -114,19 +109,38 @@ def plot_telemetry(logs, case_name, cfg, output_dir):
     ax2.set_xlabel('mission time (s)')
     ax2.grid(True, alpha=0.3)
     
-    # keep the battery legend tucked top-left inside the plot
     ax2.legend(loc='upper left', frameon=True, framealpha=0.85, bbox_to_anchor=(0.02, 0.98))
 
-    # segmented yield on right axis
+    # segmented yield & naive baselines
     ax2_t = ax2.twinx()
     color_dict = _get_model_colors(logs['model_name'])
     handles, labels = _plot_segmented_line(ax2_t, t_plot, logs['cum_correct'], logs['model_name'], color_dict, ylabel="cumulative correct inferences")
     
-    # model legend below x-axis
+    # inject requested naive lines
+    baseline_colors = {'High_Accuracy': 'tab:blue', 'High_Throughput': 'tab:red', 'High_Efficiency': 'tab:purple'}
+    
+    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
+        line, = ax2_t.plot(t_plot, naive_states['High_Accuracy']['logs_cum_correct'], 
+                        color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, label='naive (high acc)')
+        handles.append(line)
+        labels.append('naive (high acc)')
+        
+    if plot_throughput_baseline and 'High_Throughput' in naive_states:
+        line, = ax2_t.plot(t_plot, naive_states['High_Throughput']['logs_cum_correct'], 
+                        color=baseline_colors['High_Throughput'], linestyle='--', alpha=0.8, label='naive (high t-put)')
+        handles.append(line)
+        labels.append('naive (high t-put)')
+        
+    if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
+        line, = ax2_t.plot(t_plot, naive_states['High_Efficiency']['logs_cum_correct'], 
+                        color=baseline_colors['High_Efficiency'], linestyle='--', alpha=0.8, label='naive (high eff)')
+        handles.append(line)
+        labels.append('naive (high eff)')
+
     if handles:
         ncol = min(4, len(labels))
         ax2_t.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.15), 
-                    ncol=ncol, frameon=False, title="active processing models")
+                    ncol=ncol, frameon=False, title="performance & active models")
         
     save_path = output_dir / f"{case_name}_telemetry.png"
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -140,8 +154,8 @@ def plot_orbit_dynamics(logs, case_name, output_dir):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
     fig.suptitle(f"case study: {clean_name}\norbit & data dynamics", y=0.98)
 
-    ax1.plot(t_plot, logs['alt_km'], color='gray', label='altitude')
-    ax1.set_ylabel('altitude (km)')
+    ax1.plot(t_plot, logs['alt_km'], color='gray', label='Altitude')
+    ax1.set_ylabel('Altitude (km)')
     
     ax1_t = ax1.twinx()
     ax1_t.plot(t_plot, logs['speed_km_s'], 'r--', label='ground speed')

@@ -6,8 +6,7 @@ import os
 
 # import extracted modules
 from stk_utils import load_orbit_data, interpolate_orbit
-from plotting_utils import plot_orbit_dynamics, plot_telemetry, plot_naive_blitz, plot_horizon_sweep
-
+from plotting_utils import plot_orbit_dynamics, plot_mission, plot_naive_blitz, plot_horizon_sweep
 try:
     from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
     ROOT_DIR = get_repo_root()
@@ -303,7 +302,13 @@ class ContinuousSatSim:
         self._print_verbose_report(case_name, report_stats, logs, sim_data, cfg, naive_states)
         
         plot_orbit_dynamics(logs, case_name, self.output_dir)
-        plot_telemetry(logs, case_name, cfg, self.output_dir)
+        
+        # updated plotting call with optional baselines toggled on/off
+        plot_mission(logs, naive_states, case_name, cfg, self.output_dir,
+                            plot_accuracy_baseline=True, 
+                            plot_efficiency_baseline=False, 
+                            plot_throughput_baseline=False)
+                            
         plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         
         return logs
