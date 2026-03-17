@@ -223,7 +223,6 @@ def plot_naive_blitz(logs, naive_states, case_name, cfg, output_dir):
     ax2.legend(loc='upper left', framealpha=0.9)
     ax2.grid(True, alpha=0.3)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.94])
     save_path = output_dir / f"{case_name}_naive_blitz.png"
     plt.savefig(save_path, dpi=300)
     plt.close()

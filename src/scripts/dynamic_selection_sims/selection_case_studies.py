@@ -394,8 +394,9 @@ if __name__ == "__main__":
     sim_sso.run_case_study("SSO_01_Baseline", config_overrides=sso_cfg, events=None)
 
     burst_events = [
-        {'start': 500, 'duration': 100, 'extra_demand_ips': 200.0},
-        {'start': 3000, 'duration': 100, 'extra_demand_ips': 200.0},
+        # Sustained data collection over a massive target area
+        {'start': 2000, 'duration': 3000, 'extra_demand_ips': 80.0},
+        {'start': 15000, 'duration': 3000, 'extra_demand_ips': 80.0},
     ]
     sim_sso.run_case_study("SSO_02_Time_Crunch", config_overrides=sso_cfg, events=burst_events)
 
