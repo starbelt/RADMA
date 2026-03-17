@@ -66,25 +66,24 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
                         plot_efficiency_baseline=False, 
                         plot_throughput_baseline=False):
     set_plot_style()
-    clean_name = case_name.replace('_', ' ')
     t_plot = np.array(logs['time_rel'])
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True, gridspec_kw={'hspace': 0.15})
     
     # bump title up to make room for floating legend
-    fig.suptitle(f"case study telemetry: {clean_name}", y=1.05) 
+    fig.suptitle(f"Case Study Telemetry: {case_name}", y=1.05) 
 
     # orbit dynamics
-    ax1.plot(t_plot, logs['alt_km'], color='dimgray', label='altitude')
-    ax1.set_ylabel('altitude (km)')
+    ax1.plot(t_plot, logs['alt_km'], color='dimgray', label='Altitude')
+    ax1.set_ylabel('Altitude (km)')
     
     alt_span = np.max(logs['alt_km']) - np.min(logs['alt_km'])
     if alt_span == 0: alt_span = np.max(logs['alt_km']) * 0.1 
     ax1.set_ylim(np.min(logs['alt_km']) - (0.1 * alt_span), np.max(logs['alt_km']) + (0.1 * alt_span))
     
     ax1_t = ax1.twinx()
-    ax1_t.plot(t_plot, logs['speed_km_s'], color='tab:red', linestyle='--', alpha=0.7, label='ground speed')
-    ax1_t.set_ylabel('speed (km/s)', color='tab:red')
+    ax1_t.plot(t_plot, logs['speed_km_s'], color='tab:red', linestyle='--', alpha=0.7, label='Ground Speed')
+    ax1_t.set_ylabel('Speed (km/s)', color='tab:red')
     
     spd_span = np.max(logs['speed_km_s']) - np.min(logs['speed_km_s'])
     if spd_span == 0: spd_span = np.max(logs['speed_km_s']) * 0.1
@@ -97,16 +96,16 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     ax1.grid(True, alpha=0.3)
 
     # combined energy & yield
-    ax2.plot(t_plot, logs['battery_wh'], color='tab:green', linewidth=3, label='battery charge')
-    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', label='hard lock limit')
-    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='tab:green', linestyle=':', label='resume limit')
+    ax2.plot(t_plot, logs['battery_wh'], color='tab:green', linewidth=3, label='Battery Charge')
+    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', label='Hard Lock Limit')
+    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='tab:green', linestyle=':', label='Resume Limit')
     
     lit = np.array(logs['is_lit'])
     ax2.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax2.get_xaxis_transform(), 
-                    color='gold', alpha=0.15, label='sunlight interval')
+                    color='gold', alpha=0.15, label='Sunlight Interval')
     
-    ax2.set_ylabel('battery (wh)')
-    ax2.set_xlabel('mission time (s)')
+    ax2.set_ylabel('Battery (Wh)')
+    ax2.set_xlabel('Mission Time (s)')
     ax2.grid(True, alpha=0.3)
     
     ax2.legend(loc='upper left', frameon=True, framealpha=0.85, bbox_to_anchor=(0.02, 0.98))
@@ -114,33 +113,33 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     # segmented yield & naive baselines
     ax2_t = ax2.twinx()
     color_dict = _get_model_colors(logs['model_name'])
-    handles, labels = _plot_segmented_line(ax2_t, t_plot, logs['cum_correct'], logs['model_name'], color_dict, ylabel="cumulative correct inferences")
+    handles, labels = _plot_segmented_line(ax2_t, t_plot, logs['cum_correct'], logs['model_name'], color_dict, ylabel="Cumulative Correct Inferences")
     
     # inject requested naive lines
     baseline_colors = {'High_Accuracy': 'tab:blue', 'High_Throughput': 'tab:red', 'High_Efficiency': 'tab:purple'}
     
     if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
         line, = ax2_t.plot(t_plot, naive_states['High_Accuracy']['logs_cum_correct'], 
-                        color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, label='naive (high acc)')
+                        color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, label='Naive (High Accuracy)')
         handles.append(line)
-        labels.append('naive (high acc)')
+        labels.append('Naive (High Accuracy)')
         
     if plot_throughput_baseline and 'High_Throughput' in naive_states:
         line, = ax2_t.plot(t_plot, naive_states['High_Throughput']['logs_cum_correct'], 
-                        color=baseline_colors['High_Throughput'], linestyle='--', alpha=0.8, label='naive (high t-put)')
+                        color=baseline_colors['High_Throughput'], linestyle='--', alpha=0.8, label='Naive (High Throughput)')
         handles.append(line)
-        labels.append('naive (high t-put)')
+        labels.append('Naive (High Throughput)')
         
     if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
         line, = ax2_t.plot(t_plot, naive_states['High_Efficiency']['logs_cum_correct'], 
-                        color=baseline_colors['High_Efficiency'], linestyle='--', alpha=0.8, label='naive (high eff)')
+                        color=baseline_colors['High_Efficiency'], linestyle='--', alpha=0.8, label='Naive (High Efficiency)')
         handles.append(line)
-        labels.append('naive (high eff)')
+        labels.append('Naive (High Efficiency)')
 
     if handles:
         ncol = min(4, len(labels))
         ax2_t.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.15), 
-                    ncol=ncol, frameon=False, title="performance & active models")
+                    ncol=ncol, frameon=False, title="Performance & Active Models")
         
     save_path = output_dir / f"{case_name}_telemetry.png"
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
