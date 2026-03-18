@@ -8,13 +8,28 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d import Axes3D
 
+# Climb up until we find the project root 'CoralGUI'
+current_file = pathlib.Path(__file__).resolve()
+project_root = None
+
+for parent in current_file.parents:
+    if parent.name == "CoralGUI":
+        project_root = parent
+        break
+
+if project_root:
+    sys.path.insert(0, str(project_root))
+else:
+    
+    sys.path.insert(0, str(current_file.parents[5]))
+
+
 from libs.coral_tpu_characterization.src.scripts.utils.saleae_parsing import SaleaeOutputParsing
 from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
 from libs.coral_tpu_characterization.src.scripts.utils.ParamCounts import ParamCounts
 
 
 plt.rcParams.update({'font.size': 16})  # Base font size
-
 
 def lighten_color(color, factor=0.5):
     """Lightens the given color."""
@@ -149,7 +164,6 @@ class GridStatsPlotting:
         print(f"  Efficiency: {name_eff}")
         print(f"  Throughput: {name_rate}")
         return name_eff, name_rate
-
 
     # standard metrics, sorted by energy per inference
     def plot_standard_metrics(self, filename="grid_standard_metrics.png"):
@@ -351,7 +365,6 @@ class GridStatsPlotting:
         plt.savefig(self.output_dir / "grid_efficiency_overview.png", dpi=300)
         plt.close()
 
-
     # 3D Surface
 
     def plot_3d_surface(self, specific_models=None, filename="grid_3d_surface.png", title_suffix=""):
@@ -398,7 +411,6 @@ class GridStatsPlotting:
         print(f"[PLOT] Saved {filename}")
         plt.close()
 
-
     # Decision Frontier
 
     def plot_decision_frontier(self, model_a_name, model_b_name):
@@ -443,7 +455,6 @@ class GridStatsPlotting:
         print(f"[PLOT] Saved grid_decision_frontier.png")
         plt.close()
 
-
     # Budget Loop to generate excel tables
     def run_budget_loop(self, buffers, frame_times):
         if self.df is None or self.df.empty: return
@@ -463,10 +474,104 @@ class GridStatsPlotting:
                 pd.DataFrame(grid, index=[f"E:{b:.2f}" for b in buffers], columns=[f"T:{t:.2f}" for t in frame_times]).to_excel(writer, sheet_name=name.replace("Grid ", "").replace(" ", "_"))
         print(f"[EXCEL] Saved {xl_path}")
 
+    def plot_model_selection_heatmap(self, resolution=300, filename="grid_selection_heatmap.png"):
+        """
+        Generates a 2D heatmap showing which model to select based on required 
+        Inferences per Second and Inferences per Joule constraints.
+        """
+        if self.df is None or self.df.empty:
+            print("[WARN] No data available for heatmap.")
+            return
+
+        print(f"\n[PLOT] Generating Selection Heatmap (Resolution: {resolution}x{resolution})...")
+
+        # Define the grid space based on our max achievable metrics
+        max_inf_sec = self.df["Inf_per_Sec"].max() * 1.05
+        max_inf_joule = self.df["Inf_per_Joule"].max() * 1.05
+        
+        req_inf_sec = np.linspace(0, max_inf_sec, resolution)
+        req_inf_joule = np.linspace(0, max_inf_joule, resolution)
+        X, Y = np.meshgrid(req_inf_sec, req_inf_joule)
+
+        # Extract model stats as numpy arrays for fast vectorized comparisons
+        models = self.df["Model name"].values
+        inf_sec = self.df["Inf_per_Sec"].values
+        inf_joule = self.df["Inf_per_Joule"].values
+        
+        # Tie-breaker: If multiple models meet the throughput and efficiency needs, 
+        # we select the one with the highest Top-1 Accuracy.
+        tie_breaker_scores = self.df["Top-1 Accuracy"].values 
+
+        # Create a 3D boolean mask: (num_models, res_y, res_x)
+        # True if a model satisfies the grid point's minimum requirements
+        valid_mask = (inf_sec[:, None, None] >= X) & (inf_joule[:, None, None] >= Y)
+
+        # Apply the tie-breaker
+        # Initialize scores with -1 (unachievable)
+        scores = np.full_like(valid_mask, -1.0, dtype=float)
+        # Broadcast the tie-breaker scores onto the valid coordinates
+        scores[valid_mask] = np.broadcast_to(tie_breaker_scores[:, None, None], valid_mask.shape)[valid_mask]
+
+        # Find the index of the model with the highest score at each grid point
+        best_idx = np.argmax(scores, axis=0)
+        max_scores = np.max(scores, axis=0)
+        
+        # Identify regions where NO model can meet the requirements
+        best_idx[max_scores == -1] = -1
+
+        # Map indices to colors for plotting
+        fig, ax = plt.subplots(figsize=(16, 12))
+        
+        # Create an RGB image array (Default to light grey for 'Unachievable')
+        Z_color = np.full((resolution, resolution, 3), 0.9) 
+        
+        unique_winners = np.unique(best_idx)
+        valid_winners = [uid for uid in unique_winners if uid != -1]
+        
+        # Generate distinct colors for our models (scalable to 25+)
+        cmap = matplotlib.colormaps["turbo"]
+        model_colors = cmap(np.linspace(0.05, 0.95, len(models)))
+        
+        legend_patches = []
+        for uid in valid_winners:
+            mask = (best_idx == uid)
+            Z_color[mask] = model_colors[uid][:3]
+            legend_patches.append(Patch(color=model_colors[uid], label=models[uid]))
+            
+        legend_patches.append(Patch(color=(0.9, 0.9, 0.9), label='Unachievable Constraints'))
+
+        # Draw the heatmap
+        ax.imshow(
+            Z_color, 
+            origin='lower', 
+            extent=[0, max_inf_sec, 0, max_inf_joule], 
+            aspect='auto'
+        )
+
+        ax.set_title("Model Selection Heatmap", fontsize=28)
+        ax.set_xlabel("Required Inferences / Second", fontsize=24)
+        ax.set_ylabel("Required Inferences / Joule", fontsize=24)
+        ax.tick_params(axis='both', labelsize=18)
+        
+        ax.legend(
+            handles=legend_patches, 
+            loc='center left', 
+            bbox_to_anchor=(1.02, 0.5), 
+            fontsize=14, 
+            title="Selected Model", 
+            title_fontsize=16
+        )
+
+        plt.tight_layout()
+        save_path = self.output_dir / filename
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"[PLOT] Saved {filename}")
+        plt.close()
+
 if __name__ == "__main__":
     REPO_ROOT = get_repo_root()
     
-    # --- RELATIVE PATHS ---
+    # RELATIVE PATHS
     JSON_DIR = REPO_ROOT / "data/tpunet_acc"
     SALEAE_ROOT = REPO_ROOT / "../../results/captures_1_20" # so cursed
     OUTPUT_DIR = REPO_ROOT / "results/plots/grid_analysis"
@@ -476,21 +581,22 @@ if __name__ == "__main__":
     
     if plotter.df is not None and not plotter.df.empty:
 
-        plotter.plot_standard_metrics()
-        plotter.plot_grouped_metrics()
-        plotter.plot_efficiency_overview()
-        eff, rate = plotter.find_champions()
+        # plotter.plot_standard_metrics()
+        # plotter.plot_grouped_metrics()
+        # plotter.plot_efficiency_overview()
+        # eff, rate = plotter.find_champions()
 
-        plotter.plot_3d_surface(specific_models=None, filename="grid_3d_all.png", title_suffix="(All Models)")
-        if eff and rate:
-            champs = list(set([eff, rate]))
-            plotter.plot_3d_surface(specific_models=champs, filename="grid_3d_champions.png", title_suffix="(Champions Only)")
-            plotter.plot_decision_frontier(eff, rate)
+        plotter.plot_model_selection_heatmap(resolution=500)
 
+        # plotter.plot_3d_surface(specific_models=None, filename="grid_3d_all.png", title_suffix="(All Models)")
+        # if eff and rate:
+        #     champs = list(set([eff, rate]))
+        #     plotter.plot_3d_surface(specific_models=champs, filename="grid_3d_champions.png", title_suffix="(Champions Only)")
+        #     plotter.plot_decision_frontier(eff, rate)
 
-        buffers = [0.5 * c * 25 for c in [0.01, 0.1, 1.0, 5.0]]
-        times = [1.0, 5.0, 10.0, 30.0, 60.0]
-        plotter.run_budget_loop(sorted(buffers), times)
+        # buffers = [0.5 * c * 25 for c in [0.01, 0.1, 1.0, 5.0]]
+        # times = [1.0, 5.0, 10.0, 30.0, 60.0]
+        # plotter.run_budget_loop(sorted(buffers), times)
         
         print("\n[DONE] Script completed successfully.")
     else:

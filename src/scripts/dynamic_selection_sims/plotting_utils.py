@@ -252,3 +252,6 @@ def plot_horizon_sweep(results, best_horizon, frames_per_orbit, case_name, outpu
     save_path = output_dir / f"{case_name}_optimization_curve.png"
     plt.savefig(save_path, dpi=300)
     plt.close()
+
+
+def plot_heat_map():
