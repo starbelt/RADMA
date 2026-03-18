@@ -73,7 +73,6 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     # bump title up to make room for floating legend
     fig.suptitle(f"Case Study Telemetry: {case_name}", y=1.05) 
 
-    # orbit dynamics
     ax1.plot(t_plot, logs['alt_km'], color='dimgray', label='Altitude')
     ax1.set_ylabel('Altitude (km)')
     
@@ -94,9 +93,25 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='lower center', 
             bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
     ax1.grid(True, alpha=0.3)
+    
+    # Define baseline colors early so we can use them for both axes
+    baseline_colors = {'High_Accuracy': 'tab:blue', 'High_Throughput': 'tab:red', 'High_Efficiency': 'tab:purple'}
+    
+    ax2.plot(t_plot, logs['battery_wh'], color='tab:green', linewidth=3, label='Battery Charge (Dynamic)')
+    
+    # Inject requested naive battery lines
+    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
+        ax2.plot(t_plot, naive_states['High_Accuracy']['logs_battery_wh'], 
+                color=baseline_colors['High_Accuracy'], linestyle='-.', alpha=0.5, linewidth=1.5, label='Battery (High Accuracy)')
+        
+    if plot_throughput_baseline and 'High_Throughput' in naive_states:
+        ax2.plot(t_plot, naive_states['High_Throughput']['logs_battery_wh'], 
+                color=baseline_colors['High_Throughput'], linestyle='-.', alpha=0.5, linewidth=1.5, label='Battery (High Throughput)')
+        
+    if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
+        ax2.plot(t_plot, naive_states['High_Efficiency']['logs_battery_wh'], 
+                color=baseline_colors['High_Efficiency'], linestyle='-.', alpha=0.5, linewidth=1.5, label='Battery (High Efficiency)')
 
-    # combined energy & yield
-    ax2.plot(t_plot, logs['battery_wh'], color='tab:green', linewidth=3, label='Battery Charge')
     ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', label='Hard Lock Limit')
     ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='tab:green', linestyle=':', label='Resume Limit')
     
@@ -108,33 +123,32 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     ax2.set_xlabel('Mission Time (s)')
     ax2.grid(True, alpha=0.3)
     
-    ax2.legend(loc='upper left', frameon=True, framealpha=0.85, bbox_to_anchor=(0.02, 0.98))
+    # Moved the legend slightly to accommodate the extra lines without covering data
+    ax2.legend(loc='lower left', frameon=True, framealpha=0.85, fontsize=10)
 
-    # segmented yield & naive baselines
+    # Segmented yield & naive baselines
     ax2_t = ax2.twinx()
     color_dict = _get_model_colors(logs['model_name'])
     handles, labels = _plot_segmented_line(ax2_t, t_plot, logs['cum_correct'], logs['model_name'], color_dict, ylabel="Cumulative Correct Inferences")
     
-    # inject requested naive lines
-    baseline_colors = {'High_Accuracy': 'tab:blue', 'High_Throughput': 'tab:red', 'High_Efficiency': 'tab:purple'}
-    
+    # Inject requested naive yield lines
     if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
         line, = ax2_t.plot(t_plot, naive_states['High_Accuracy']['logs_cum_correct'], 
-                        color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, label='Naive (High Accuracy)')
+                        color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, label='Yield (High Accuracy)')
         handles.append(line)
-        labels.append('Naive (High Accuracy)')
+        labels.append('Yield (High Accuracy)')
         
     if plot_throughput_baseline and 'High_Throughput' in naive_states:
         line, = ax2_t.plot(t_plot, naive_states['High_Throughput']['logs_cum_correct'], 
-                        color=baseline_colors['High_Throughput'], linestyle='--', alpha=0.8, label='Naive (High Throughput)')
+                        color=baseline_colors['High_Throughput'], linestyle='--', alpha=0.8, label='Yield (High Throughput)')
         handles.append(line)
-        labels.append('Naive (High Throughput)')
+        labels.append('Yield (High Throughput)')
         
     if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
         line, = ax2_t.plot(t_plot, naive_states['High_Efficiency']['logs_cum_correct'], 
-                        color=baseline_colors['High_Efficiency'], linestyle='--', alpha=0.8, label='Naive (High Efficiency)')
+                        color=baseline_colors['High_Efficiency'], linestyle='--', alpha=0.8, label='Yield (High Efficiency)')
         handles.append(line)
-        labels.append('Naive (High Efficiency)')
+        labels.append('Yield (High Efficiency)')
 
     if handles:
         ncol = min(4, len(labels))
@@ -252,6 +266,3 @@ def plot_horizon_sweep(results, best_horizon, frames_per_orbit, case_name, outpu
     save_path = output_dir / f"{case_name}_optimization_curve.png"
     plt.savefig(save_path, dpi=300)
     plt.close()
-
-
-def plot_heat_map():

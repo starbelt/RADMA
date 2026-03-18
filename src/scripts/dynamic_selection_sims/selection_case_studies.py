@@ -7,6 +7,19 @@ import os
 from stk_utils import load_orbit_data, interpolate_orbit
 from plotting_utils import plot_orbit_dynamics, plot_mission, plot_naive_blitz, plot_horizon_sweep
 
+current_file = Path(__file__).resolve()
+project_root = None
+for parent in current_file.parents:
+    if parent.name == "CoralGUI":
+        project_root = parent
+        break
+
+if project_root:
+    sys.path.insert(0, str(project_root))
+else:
+    
+    sys.path.insert(0, str(current_file.parents[5]))
+
 try:
     from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
     ROOT_DIR = get_repo_root()
