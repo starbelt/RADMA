@@ -620,7 +620,7 @@ class GridStatsPlotting:
             color_grid[best_idx == uid] = model_colors[uid]
             legend_patches.append(Patch(color=model_colors[uid], label=models[uid]))
             
-        legend_patches.append(Patch(color=(0.9, 0.9, 0.9), label='unachievable'))
+        legend_patches.append(Patch(color=(0.9, 0.9, 0.9), label='Unachievable'))
 
         # pad the geometry for solid volume walls
         X_pad = np.pad(X, pad_width=1, mode='edge')
@@ -647,10 +647,10 @@ class GridStatsPlotting:
 
         # formatting
         ax.set_zlim(bottom=0, top=100)
-        ax.set_title("maximum achievable accuracy vs. raw constraints", fontsize=28, pad=20)
-        ax.set_xlabel("required inferences / second", fontsize=20, labelpad=20)
-        ax.set_ylabel("required inferences / joule", fontsize=20, labelpad=20)
-        ax.set_zlabel("top-1 accuracy (%)", fontsize=20, labelpad=15)
+        ax.set_title("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=28, pad=20)
+        ax.set_xlabel("Required Inferences / Second", fontsize=20, labelpad=20)
+        ax.set_ylabel("Required Inferences / Joule", fontsize=20, labelpad=20)
+        ax.set_zlabel("Top-1 Accuracy (%)", fontsize=20, labelpad=15)
         ax.tick_params(axis='both', which='major', labelsize=14)
         ax.view_init(elev=35, azim=230) 
 
@@ -660,7 +660,7 @@ class GridStatsPlotting:
             loc='center left', 
             bbox_to_anchor=(1.1, 0.5), 
             fontsize=14, 
-            title="selected model", 
+            title="Selected Model", 
             title_fontsize=16
         )
 
