@@ -570,18 +570,14 @@ class GridStatsPlotting:
         print(f"[PLOT] Saved {filename}")
         plt.close()
 
-    def plot_3d_accuracy_surface(self, resolution=100, filename="grid_3d_accuracy_surface.png"):
-        """
-        Generates a 3D surface plot where X and Y are raw inference constraints,
-        and Z is the maximum achievable Top-1 Accuracy under those constraints.
-        """
+    def plot_3d_accuracy_surface(self, resolution=100, filename="grid_3d_accuracy_surface.png", interactive=False):
         if self.df is None or self.df.empty:
-            print("[WARN] No data available for 3D plot.")
+            print("[warn] no data available for 3d plot.")
             return
 
-        print(f"\n[PLOT] Generating 3D Accuracy Surface (Resolution: {resolution}x{resolution})...")
+        print(f"\n[plot] generating 3d accuracy surface (resolution: {resolution}x{resolution})...")
 
-        # Define the grid space based on max achievable raw metrics
+        # define the grid space
         max_inf_sec = self.df["Inf_per_Sec"].max() * 1.05
         max_inf_joule = self.df["Inf_per_Joule"].max() * 1.05
         
@@ -589,61 +585,96 @@ class GridStatsPlotting:
         req_inf_joule = np.linspace(0, max_inf_joule, resolution)
         X, Y = np.meshgrid(req_inf_sec, req_inf_joule)
 
-        # Extract arrays for vectorized comparison
+        # extract arrays
+        models = self.df["Model name"].values
         inf_sec = self.df["Inf_per_Sec"].values
         inf_joule = self.df["Inf_per_Joule"].values
         accuracies = self.df["Top-1 Accuracy"].values 
 
-        # Create 3D boolean mask (num_models, res_y, res_x)
+        # boolean mask for valid constraints
         valid_mask = (inf_sec[:, None, None] >= X) & (inf_joule[:, None, None] >= Y)
 
-        # Broadcast accuracies to valid coordinates
+        # broadcast accuracies and find the winner
         scores = np.full_like(valid_mask, -1.0, dtype=float)
         scores[valid_mask] = np.broadcast_to(accuracies[:, None, None], valid_mask.shape)[valid_mask]
 
-        # The Z surface is the max accuracy achievable at each grid point
         Z = np.max(scores, axis=0)
-        
-        # Mask out unachievable regions with NaN so the plot doesn't dive to zero
-        Z[Z == -1] = np.nan
+        best_idx = np.argmax(scores, axis=0)
 
-        # Build the 3D Plot
+        # mask unachievable space
+        best_idx[Z == -1] = -1
+        Z[Z == -1] = 0.0  
+
+        # build the color grid matching the 2d heatmap
+        cmap = plt.get_cmap("turbo")
+        model_colors = cmap(np.linspace(0.05, 0.95, len(models)))
+        
+        # default everything to light grey (rgba)
+        color_grid = np.full((resolution, resolution, 4), [0.9, 0.9, 0.9, 1.0])
+        
+        unique_winners = np.unique(best_idx)
+        valid_winners = [uid for uid in unique_winners if uid != -1]
+        
+        legend_patches = []
+        for uid in valid_winners:
+            color_grid[best_idx == uid] = model_colors[uid]
+            legend_patches.append(Patch(color=model_colors[uid], label=models[uid]))
+            
+        legend_patches.append(Patch(color=(0.9, 0.9, 0.9), label='unachievable'))
+
+        # pad the geometry for solid volume walls
+        X_pad = np.pad(X, pad_width=1, mode='edge')
+        Y_pad = np.pad(Y, pad_width=1, mode='edge')
+        Z_pad = np.pad(Z, pad_width=1, mode='constant', constant_values=0.0)
+        
+        # pad the colors using 'edge' so the model colors drag down the cliff faces
+        color_grid_pad = np.pad(color_grid, ((1, 1), (1, 1), (0, 0)), mode='edge')
+
+        # build the plot
         fig = plt.figure(figsize=(18, 14))
         ax = fig.add_subplot(111, projection='3d')
 
-        # Use a colormap where "hotter" colors mean higher accuracy
-        cmap = plt.get_cmap("viridis")
-        
-        # Plot the surface. Using antialiased=True keeps the edges clean
+        # plot surface using explicit facecolors instead of a colormap
         surf = ax.plot_surface(
-            X, Y, Z, 
-            cmap=cmap, 
-            edgecolor='none', 
-            alpha=0.9, 
-            antialiased=True
+            X_pad, Y_pad, Z_pad, 
+            facecolors=color_grid_pad,
+            edgecolor='black',
+            linewidth=0.3,
+            antialiased=True,
+            rcount=45,
+            ccount=45
         )
 
-        # Formatting
-        ax.set_title("Maximum Achievable Accuracy vs. Raw Constraints", fontsize=28, pad=20)
-        ax.set_xlabel("Required Inferences / Second", fontsize=20, labelpad=20)
-        ax.set_ylabel("Required Inferences / Joule", fontsize=20, labelpad=20)
-        ax.set_zlabel("Top-1 Accuracy (%)", fontsize=20, labelpad=15)
+        # formatting
+        ax.set_zlim(bottom=0, top=100)
+        ax.set_title("maximum achievable accuracy vs. raw constraints", fontsize=28, pad=20)
+        ax.set_xlabel("required inferences / second", fontsize=20, labelpad=20)
+        ax.set_ylabel("required inferences / joule", fontsize=20, labelpad=20)
+        ax.set_zlabel("top-1 accuracy (%)", fontsize=20, labelpad=15)
         ax.tick_params(axis='both', which='major', labelsize=14)
-        
-        # Set a viewing angle that shows off the steps (adjust elev/azim as needed)
         ax.view_init(elev=35, azim=230) 
 
-        # Add a colorbar to make the Z-axis easy to read at a glance
-        cbar = fig.colorbar(surf, ax=ax, shrink=0.5, aspect=12, pad=0.1)
-        cbar.set_label('Top-1 Accuracy (%)', fontsize=18)
-        cbar.ax.tick_params(labelsize=14)
+        # add the legend outside the plot area
+        ax.legend(
+            handles=legend_patches, 
+            loc='center left', 
+            bbox_to_anchor=(1.1, 0.5), 
+            fontsize=14, 
+            title="selected model", 
+            title_fontsize=16
+        )
 
         plt.tight_layout()
-        plt.show()
-        save_path = self.output_dir / filename
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        print(f"[PLOT] Saved {filename}")
         
+        if interactive:
+            print("[plot] opening interactive 3d window. close the window to continue...")
+            plt.show()
+        else:
+            save_path = self.output_dir / filename
+            plt.savefig(save_path, dpi=300, bbox_inches="tight")
+            print(f"[plot] saved {filename}")
+            
+        plt.close()
 
 if __name__ == "__main__":
     REPO_ROOT = get_repo_root()
@@ -664,7 +695,7 @@ if __name__ == "__main__":
         # eff, rate = plotter.find_champions()
 
         plotter.plot_model_selection_heatmap(resolution=500)
-        plotter.plot_3d_accuracy_surface(resolution = 300)
+        plotter.plot_3d_accuracy_surface(resolution = 300, interactive=True)
 
         # plotter.plot_3d_surface(specific_models=None, filename="grid_3d_all.png", title_suffix="(All Models)")
         # if eff and rate:
