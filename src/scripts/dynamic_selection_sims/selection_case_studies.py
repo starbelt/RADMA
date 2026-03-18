@@ -147,7 +147,7 @@ class ContinuousSatSim:
         
         # set target battery levels based on the current phase
         if row['is_lit'] > 0.5:
-            target_j = limit_enable_j
+            target_j = 3000 # limit_enable_j # TODO: Make this smart
         else:
             # eclipse target: limit + 5% 
             target_j = limit_disable_j*1.01 #+ (base_w * 1.00 * t_rem)
@@ -164,7 +164,7 @@ class ContinuousSatSim:
             step_energy_budget_j = 0.0
             
         # physically bound the budget so it can't overdraw the current instant surplus
-        hard_surplus_j = max(0.0, current_battery_j - limit_disable_j)
+        hard_surplus_j = max(0.0, current_battery_j + env_energy_j - limit_disable_j)
         step_energy_budget_j = min(step_energy_budget_j, hard_surplus_j)
 
         return env_energy_j, base_w, infs_for_this_second, step_energy_budget_j, cpu_blocked
