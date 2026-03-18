@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d import Axes3D
 
+matplotlib.use('TkAgg')
+
 # Climb up until we find the project root 'CoralGUI'
 current_file = pathlib.Path(__file__).resolve()
 project_root = None
@@ -568,6 +570,81 @@ class GridStatsPlotting:
         print(f"[PLOT] Saved {filename}")
         plt.close()
 
+    def plot_3d_accuracy_surface(self, resolution=100, filename="grid_3d_accuracy_surface.png"):
+        """
+        Generates a 3D surface plot where X and Y are raw inference constraints,
+        and Z is the maximum achievable Top-1 Accuracy under those constraints.
+        """
+        if self.df is None or self.df.empty:
+            print("[WARN] No data available for 3D plot.")
+            return
+
+        print(f"\n[PLOT] Generating 3D Accuracy Surface (Resolution: {resolution}x{resolution})...")
+
+        # Define the grid space based on max achievable raw metrics
+        max_inf_sec = self.df["Inf_per_Sec"].max() * 1.05
+        max_inf_joule = self.df["Inf_per_Joule"].max() * 1.05
+        
+        req_inf_sec = np.linspace(0, max_inf_sec, resolution)
+        req_inf_joule = np.linspace(0, max_inf_joule, resolution)
+        X, Y = np.meshgrid(req_inf_sec, req_inf_joule)
+
+        # Extract arrays for vectorized comparison
+        inf_sec = self.df["Inf_per_Sec"].values
+        inf_joule = self.df["Inf_per_Joule"].values
+        accuracies = self.df["Top-1 Accuracy"].values 
+
+        # Create 3D boolean mask (num_models, res_y, res_x)
+        valid_mask = (inf_sec[:, None, None] >= X) & (inf_joule[:, None, None] >= Y)
+
+        # Broadcast accuracies to valid coordinates
+        scores = np.full_like(valid_mask, -1.0, dtype=float)
+        scores[valid_mask] = np.broadcast_to(accuracies[:, None, None], valid_mask.shape)[valid_mask]
+
+        # The Z surface is the max accuracy achievable at each grid point
+        Z = np.max(scores, axis=0)
+        
+        # Mask out unachievable regions with NaN so the plot doesn't dive to zero
+        Z[Z == -1] = np.nan
+
+        # Build the 3D Plot
+        fig = plt.figure(figsize=(18, 14))
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Use a colormap where "hotter" colors mean higher accuracy
+        cmap = plt.get_cmap("viridis")
+        
+        # Plot the surface. Using antialiased=True keeps the edges clean
+        surf = ax.plot_surface(
+            X, Y, Z, 
+            cmap=cmap, 
+            edgecolor='none', 
+            alpha=0.9, 
+            antialiased=True
+        )
+
+        # Formatting
+        ax.set_title("Maximum Achievable Accuracy vs. Raw Constraints", fontsize=28, pad=20)
+        ax.set_xlabel("Required Inferences / Second", fontsize=20, labelpad=20)
+        ax.set_ylabel("Required Inferences / Joule", fontsize=20, labelpad=20)
+        ax.set_zlabel("Top-1 Accuracy (%)", fontsize=20, labelpad=15)
+        ax.tick_params(axis='both', which='major', labelsize=14)
+        
+        # Set a viewing angle that shows off the steps (adjust elev/azim as needed)
+        ax.view_init(elev=35, azim=230) 
+
+        # Add a colorbar to make the Z-axis easy to read at a glance
+        cbar = fig.colorbar(surf, ax=ax, shrink=0.5, aspect=12, pad=0.1)
+        cbar.set_label('Top-1 Accuracy (%)', fontsize=18)
+        cbar.ax.tick_params(labelsize=14)
+
+        plt.tight_layout()
+        plt.show()
+        save_path = self.output_dir / filename
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"[PLOT] Saved {filename}")
+        
+
 if __name__ == "__main__":
     REPO_ROOT = get_repo_root()
     
@@ -587,6 +664,7 @@ if __name__ == "__main__":
         # eff, rate = plotter.find_champions()
 
         plotter.plot_model_selection_heatmap(resolution=500)
+        plotter.plot_3d_accuracy_surface(resolution = 300)
 
         # plotter.plot_3d_surface(specific_models=None, filename="grid_3d_all.png", title_suffix="(All Models)")
         # if eff and rate:
