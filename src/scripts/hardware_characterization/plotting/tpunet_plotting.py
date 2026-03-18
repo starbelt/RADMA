@@ -571,6 +571,7 @@ class GridStatsPlotting:
         plt.close()
 
     def plot_3d_accuracy_surface(self, resolution=100, filename="grid_3d_accuracy_surface.png", interactive=False):
+        # TODO: 4 side videw of cube + sliced version
         if self.df is None or self.df.empty:
             print("[warn] no data available for 3d plot.")
             return

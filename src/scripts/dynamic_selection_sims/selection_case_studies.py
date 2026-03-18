@@ -69,7 +69,7 @@ class ContinuousSatSim:
         cfg.update({
             'focal_length_mm': 85.0,
             'battery_capacity_wh': 1.5,
-            'solar_generation_mw': 600.0, 
+            'solar_generation_mw': 6000.0, 
         })
         return cfg
 
@@ -398,9 +398,9 @@ class ContinuousSatSim:
         
         plot_orbit_dynamics(logs, case_name, self.output_dir)
         plot_mission(logs, naive_states, case_name, cfg, self.output_dir,
-                    plot_accuracy_baseline=False, 
+                    plot_accuracy_baseline=True, 
                     plot_efficiency_baseline=True, 
-                    plot_throughput_baseline=False)
+                    plot_throughput_baseline=True)
         plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         
         return logs
