@@ -155,7 +155,7 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
         ax2_t.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.15), 
                     ncol=ncol, frameon=False, title="Performance & Active Models")
         
-    save_path = output_dir / f"{case_name}_telemetry.png"
+    save_path = output_dir / f"{case_name}_STATIC.png"
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
 

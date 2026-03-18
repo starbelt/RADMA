@@ -40,7 +40,7 @@ class ContinuousSatSim:
         'high_alt_target_km': 200.0, 
         'high_alt_min_px': 2,        
         
-        'initial_charge_pct': 0.85,
+        'initial_charge_pct': 0.55,
         'compute_enable_pct': 0.65,
         'compute_disable_pct': 0.45,
         
@@ -119,9 +119,9 @@ class ContinuousSatSim:
             best_idx = expected_correct.idxmax()
             best_model = viable_models.loc[best_idx]
             return best_model, "partial_frame"
+        
 
-    def _get_step_conditions(self, t_rel, dt, row, cfg, events, current_battery_j, limit_disable_j):
-        # calculate the current environment and budget logic for this timestep
+    def _get_step_conditions(self, t_rel, t_abs, dt, row, cfg, events, current_battery_j, limit_disable_j, limit_enable_j):
         disturb_power_w = 0.0
         extra_demand_ips = 0.0
         cpu_blocked = False
@@ -141,18 +141,35 @@ class ContinuousSatSim:
         
         infs_for_this_second = (row['demand_infs_per_sec'] + extra_demand_ips) * dt
 
-        n = cfg['budget_horizon_frames']
-        surplus_j = max(0.0, current_battery_j - limit_disable_j)
-        battery_alloc_j = surplus_j / n if n > 1e-6 else surplus_j
+        # calculate time remaining in the current sunlight/eclipse phase
+        phase_end_time = row['phase_end_time']
+        t_rem = max(dt, phase_end_time - t_abs)
         
+        # set target battery levels based on the current phase
+        if row['is_lit'] > 0.5:
+            target_j = limit_enable_j
+        else:
+            # eclipse target: limit + 5% 
+            target_j = limit_disable_j*1.01 #+ (base_w * 1.00 * t_rem)
+            
+        # integral prediction
         net_power_w = solar_w - base_w
-        step_incoming_j = max(0.0, net_power_w * dt)
-        step_energy_budget_j = min(battery_alloc_j + step_incoming_j, surplus_j)
+        expected_end_battery_j = current_battery_j + (net_power_w * t_rem)
+        usable_surplus_j = expected_end_battery_j - target_j
+        
+        # divvy up the bucket across the remaining frames
+        if usable_surplus_j > 0:
+            step_energy_budget_j = (usable_surplus_j / t_rem) * dt
+        else:
+            step_energy_budget_j = 0.0
+            
+        # physically bound the budget so it can't overdraw the current instant surplus
+        hard_surplus_j = max(0.0, current_battery_j - limit_disable_j)
+        step_energy_budget_j = min(step_energy_budget_j, hard_surplus_j)
 
         return env_energy_j, base_w, infs_for_this_second, step_energy_budget_j, cpu_blocked
 
     def _process_dynamic_step(self, viable_models, infs_for_sec, step_budget_j, dt, cpu_blocked, dynamic_recharging):
-        # execute the dynamic model selection and calculate drops
         drops = {'power': 0.0, 'time': 0.0, 'energy': 0.0}
 
         if infs_for_sec <= 0:
@@ -189,33 +206,73 @@ class ContinuousSatSim:
                 
         proc_energy_j = processed_infs * model['eng_j']
         return active_model, current_acc, processed_infs, proc_energy_j, drops
+    
+    ## Continuous Time Naive Comparison
+
+    # def _process_naive_step(self, naive_states, env_energy_j, infs_for_sec, dt, cpu_blocked, limit_disable_j, limit_enable_j, bat_cap_j):
+    #     # execute all naive baselines for the current timestep
+    #     for name, ns in naive_states.items():
+    #         if ns['battery_j'] < limit_disable_j: 
+    #             ns['recharging'] = True
+    #         elif ns['recharging'] and ns['battery_j'] > limit_enable_j: 
+    #             ns['recharging'] = False
+            
+    #         if cpu_blocked or ns['recharging']:
+    #             ns['battery_j'] = np.clip(ns['battery_j'] + env_energy_j, 0, bat_cap_j)
+    #         else:
+    #             available_energy_j = max(0, ns['battery_j'] - limit_disable_j)
+    #             step_energy_demand_j = dt * ns['power_w']
+                
+    #             time_runnable_s = dt
+    #             if available_energy_j < step_energy_demand_j:
+    #                 time_runnable_s = available_energy_j / ns['power_w']
+    #                 ns['recharging'] = True 
+                
+    #             ns['battery_j'] -= (time_runnable_s * ns['power_w'])
+    #             potential_infs = time_runnable_s * ns['ips']
+    #             taken = min(potential_infs, infs_for_sec)
+                
+    #             ns['battery_j'] = np.clip(ns['battery_j'] + env_energy_j, 0, bat_cap_j)
+    #             ns['total_correct'] += taken * ns['model']['acc_decimal']
+            
+    #         ns['logs_battery_wh'].append(ns['battery_j'] / 3600.0)
+    #         ns['logs_cum_correct'].append(ns['total_correct'])
 
     def _process_naive_step(self, naive_states, env_energy_j, infs_for_sec, dt, cpu_blocked, limit_disable_j, limit_enable_j, bat_cap_j):
         # execute all naive baselines for the current timestep
         for name, ns in naive_states.items():
+            # Evaluate hysteresis state (same as dynamic)
             if ns['battery_j'] < limit_disable_j: 
                 ns['recharging'] = True
             elif ns['recharging'] and ns['battery_j'] > limit_enable_j: 
                 ns['recharging'] = False
             
-            if cpu_blocked or ns['recharging']:
+            # Check if we are physically capable of processing
+            if cpu_blocked or ns['recharging'] or infs_for_sec <= 0:
+                # Idle/Recharge: apply only environmental energy changes
                 ns['battery_j'] = np.clip(ns['battery_j'] + env_energy_j, 0, bat_cap_j)
             else:
-                available_energy_j = max(0, ns['battery_j'] - limit_disable_j)
-                step_energy_demand_j = dt * ns['power_w']
+                # Calculate inference limits
+                max_t_infs = dt * ns['ips']
                 
-                time_runnable_s = dt
-                if available_energy_j < step_energy_demand_j:
-                    time_runnable_s = available_energy_j / ns['power_w']
+                # Available energy before hitting the hard lock limit
+                available_energy_j = max(0.0, ns['battery_j'] - limit_disable_j)
+                max_e_infs = available_energy_j / ns['model']['eng_j']
+                
+                # We can only process up to the tightest constraint: demand, time, or energy
+                taken = min(infs_for_sec, max_t_infs, max_e_infs)
+                
+                # If we hit the energy barrier before finishing demand/time, we trigger a recharge lock
+                if taken == max_e_infs and taken < infs_for_sec:
                     ns['recharging'] = True 
                 
-                ns['battery_j'] -= (time_runnable_s * ns['power_w'])
-                potential_infs = time_runnable_s * ns['ips']
-                taken = min(potential_infs, infs_for_sec)
+                # Apply exact per-inference energy penalties
+                proc_energy_j = taken * ns['model']['eng_j']
                 
-                ns['battery_j'] = np.clip(ns['battery_j'] + env_energy_j, 0, bat_cap_j)
+                ns['battery_j'] = np.clip(ns['battery_j'] - proc_energy_j + env_energy_j, 0, bat_cap_j)
                 ns['total_correct'] += taken * ns['model']['acc_decimal']
             
+            # Log states
             ns['logs_battery_wh'].append(ns['battery_j'] / 3600.0)
             ns['logs_cum_correct'].append(ns['total_correct'])
 
@@ -237,6 +294,10 @@ class ContinuousSatSim:
 
         sim_data = interpolate_orbit(self.raw_orbit, self.sunlight_intervals, cfg['sim_dt_s'], cfg)
         if sim_data.empty: return
+
+        sim_data['is_lit_bool'] = sim_data['is_lit'] > 0.5
+        sim_data['phase_id'] = (sim_data['is_lit_bool'] != sim_data['is_lit_bool'].shift()).cumsum()
+        sim_data['phase_end_time'] = sim_data.groupby('phase_id')['Time (EpSec)'].transform('max')
 
         naive_configs = {
             'High_Accuracy': viable_models.loc[viable_models['acc_decimal'].idxmax()],
@@ -283,21 +344,21 @@ class ContinuousSatSim:
 
         for i, row in sim_data.iterrows():
             t_rel = row['Time (EpSec)'] - t_start
+            t_abs = row['Time (EpSec)']
             dt = cfg['sim_dt_s']
             
-            # get environmental conditions and constraints
+            # pass t_abs and limit_enable_j into the conditions check
             env_energy_j, base_w, infs_for_sec, step_budget_j, cpu_blocked = self._get_step_conditions(
-                t_rel, dt, row, cfg, events, current_battery_j, limit_disable_j
+                t_rel, t_abs, dt, row, cfg, events, current_battery_j, limit_disable_j, limit_enable_j
             )
             report_stats['total_demand_infs'] += infs_for_sec
 
-            # check power lock hysteresis
             if current_battery_j < limit_disable_j:
                 dynamic_recharging = True
             elif dynamic_recharging and current_battery_j > limit_enable_j:
                 dynamic_recharging = False
 
-            # process the dynamic model
+            # run dynamic step
             active_model, acc, processed, proc_energy_j, drops = self._process_dynamic_step(
                 viable_models, infs_for_sec, step_budget_j, dt, cpu_blocked, dynamic_recharging
             )
@@ -337,8 +398,8 @@ class ContinuousSatSim:
         
         plot_orbit_dynamics(logs, case_name, self.output_dir)
         plot_mission(logs, naive_states, case_name, cfg, self.output_dir,
-                    plot_accuracy_baseline=True, 
-                    plot_efficiency_baseline=False, 
+                    plot_accuracy_baseline=False, 
+                    plot_efficiency_baseline=True, 
                     plot_throughput_baseline=False)
         plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         
@@ -401,7 +462,7 @@ if __name__ == "__main__":
     orbit_path = ROOT_DIR / "data/stk"
     out_dir = ROOT_DIR / "results/case_studies"
 
-    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=5)
+    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=30)
     sso_cfg = ContinuousSatSim.get_sso_config()
     
     sim_sso.run_case_study("SSO_01_Baseline", config_overrides=sso_cfg, events=None)
