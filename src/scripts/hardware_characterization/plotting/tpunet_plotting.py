@@ -631,48 +631,94 @@ class GridStatsPlotting:
         # pad the colors using 'edge' so the model colors drag down the cliff faces
         color_grid_pad = np.pad(color_grid, ((1, 1), (1, 1), (0, 0)), mode='edge')
 
-        # build the plot
-        fig = plt.figure(figsize=(18, 14))
-        ax = fig.add_subplot(111, projection='3d')
+        def render_subplot(ax, elev, azim, hide_axis=None):
+            ax.plot_surface(
+                X_pad, Y_pad, Z_pad, 
+                facecolors=color_grid_pad,
+                edgecolor='black',
+                linewidth=0.3,
+                antialiased=True,
+                rcount=45,
+                ccount=45
+            )
 
-        # plot surface using explicit facecolors instead of a colormap
-        surf = ax.plot_surface(
-            X_pad, Y_pad, Z_pad, 
-            facecolors=color_grid_pad,
-            edgecolor='black',
-            linewidth=0.3,
-            antialiased=True,
-            rcount=45,
-            ccount=45
-        )
+            # formatting
+            ax.set_zlim(bottom=0, top=100)
+            
+            # Subplot titles moved closer
+            ax.set_xlabel("Req. Inf / Sec" if hide_axis != 'x' else "", fontsize=12, labelpad=5)
+            ax.set_ylabel("Req. Inf / Joule" if hide_axis != 'y' else "", fontsize=12, labelpad=5)
+            ax.set_zlabel("Top-1 Acc (%)" if hide_axis != 'z' else "", fontsize=12, labelpad=5)
+            
+            # Completely remove the ticks for the hidden axis to avoid the thick black overlapping line
+            if hide_axis == 'x':
+                ax.set_xticks([])
+            elif hide_axis == 'y':
+                ax.set_yticks([])
+            elif hide_axis == 'z':
+                ax.set_zticks([])
+            
+            ax.tick_params(axis='both', which='major', labelsize=9, pad=0)
+            
+            # set camera angle
+            ax.view_init(elev=elev, azim=azim) 
 
-        # formatting
-        ax.set_zlim(bottom=0, top=100)
-        ax.set_title("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=28, pad=20)
-        ax.set_xlabel("Required Inferences / Second", fontsize=20, labelpad=20)
-        ax.set_ylabel("Required Inferences / Joule", fontsize=20, labelpad=20)
-        ax.set_zlabel("Top-1 Accuracy (%)", fontsize=20, labelpad=15)
-        ax.tick_params(axis='both', which='major', labelsize=14)
-        ax.view_init(elev=35, azim=230) 
+            # ZOOM HACK: Force the 3D plot to fill more of its invisible bounding box
+            try:
+                ax.set_box_aspect(None, zoom=1.3) # For modern matplotlib versions
+            except AttributeError:
+                ax.dist = 7 # Fallback for older matplotlib versions (default is 10)
+            ax.margins(0) # Strip extra margins
 
-        # add the legend outside the plot area
-        ax.legend(
-            handles=legend_patches, 
-            loc='center left', 
-            bbox_to_anchor=(1.1, 0.5), 
-            fontsize=14, 
-            title="Selected Model", 
-            title_fontsize=16
-        )
-
-        plt.tight_layout()
-        
         if interactive:
+            # Single large interactive plot
+            fig = plt.figure(figsize=(12, 10))
+            ax = fig.add_subplot(111, projection='3d')
+            render_subplot(ax, elev=35, azim=230)
+            ax.set_title("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=20, pad=15)
+            
+            # Shared bottom legend for interactive view
+            fig.legend(
+                handles=legend_patches, loc='lower center', 
+                ncol=min(len(legend_patches), 6), bbox_to_anchor=(0.5, 0.02),
+                title="Selected Model", title_fontsize=14, fontsize=12
+            )
+            
+            plt.subplots_adjust(bottom=0.15)
             print("[plot] opening interactive 3d window. close the window to continue...")
             plt.show()
+            
         else:
+            fig = plt.figure(figsize=(24, 6)) 
+            fig.suptitle("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=22, y=1.05)
+
+            # top (view along z-axis) -> hide Z
+            ax1 = fig.add_subplot(141, projection='3d')
+            render_subplot(ax1, elev=90, azim=-90, hide_axis='z')
+
+            ax2 = fig.add_subplot(142, projection='3d')
+            render_subplot(ax2, elev=0, azim=180, hide_axis='x')
+
+
+            ax3 = fig.add_subplot(143, projection='3d')
+            render_subplot(ax3, elev=0, azim=-90, hide_axis='y')
+
+            # iso view -> hide nothing
+            ax4 = fig.add_subplot(144, projection='3d')
+            render_subplot(ax4, elev=35, azim=230)
+
+            # AGGRESSIVE SQUEEZE: Negative wspace makes the invisible boxes overlap
+            plt.subplots_adjust(wspace=-0.25, bottom=0.25, top=0.9, left=0.0, right=1.0)
+            
+            # Shared bottom legend
+            fig.legend(
+                handles=legend_patches, loc='lower center', 
+                ncol=min(len(legend_patches), 8), bbox_to_anchor=(0.5, -0.05),
+                title="Selected Model", title_fontsize=14, fontsize=12
+            )
+            
             save_path = self.output_dir / filename
-            plt.savefig(save_path, dpi=300, bbox_inches="tight")
+            plt.savefig(save_path, dpi=300, bbox_inches="tight", pad_inches=0.2)
             print(f"[plot] saved {filename}")
             
         plt.close()
@@ -696,7 +742,7 @@ if __name__ == "__main__":
         # eff, rate = plotter.find_champions()
 
         plotter.plot_model_selection_heatmap(resolution=500)
-        plotter.plot_3d_accuracy_surface(resolution = 300, interactive=True)
+        plotter.plot_3d_accuracy_surface(resolution = 300, interactive=False)
 
         # plotter.plot_3d_surface(specific_models=None, filename="grid_3d_all.png", title_suffix="(All Models)")
         # if eff and rate:
