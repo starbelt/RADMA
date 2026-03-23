@@ -124,7 +124,7 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     ax2.grid(True, alpha=0.3)
     
     # Moved the legend slightly to accommodate the extra lines without covering data
-    ax2.legend(loc='lower left', frameon=True, framealpha=0.85, fontsize=10)
+    ax2.legend(loc='upper left', frameon=True, framealpha=0.85, fontsize=10)
 
     # Segmented yield & naive baselines
     ax2_t = ax2.twinx()
