@@ -69,7 +69,7 @@ class ContinuousSatSim:
         cfg.update({
             'focal_length_mm': 85.0,
             'battery_capacity_wh': 1.5,
-            'solar_generation_mw': 6000.0, 
+            'solar_generation_mw': 1600.0, 
         })
         return cfg
 
