@@ -642,12 +642,15 @@ class GridStatsPlotting:
                 ccount=45
             )
 
-            # formatting
-            ax.set_zlim(bottom=0, top=100)
+
+            # Push the back-panes out by 10% so the data doesn't swallow the axis lines
+            ax.set_xlim(-8, max_inf_sec)
+            ax.set_ylim(-8, max_inf_joule)
+            ax.set_zlim(0, 100) 
             
             # Subplot titles moved closer
-            ax.set_xlabel("Req. Inf / Sec" if hide_axis != 'x' else "", fontsize=12, labelpad=5)
-            ax.set_ylabel("Req. Inf / Joule" if hide_axis != 'y' else "", fontsize=12, labelpad=5)
+            ax.set_xlabel("Required Inferences / Sec" if hide_axis != 'x' else "", fontsize=12, labelpad=5)
+            ax.set_ylabel("Required Inferences / Joule" if hide_axis != 'y' else "", fontsize=12, labelpad=5)
             ax.set_zlabel("Top-1 Acc (%)" if hide_axis != 'z' else "", fontsize=12, labelpad=5)
             
             # Completely remove the ticks for the hidden axis to avoid the thick black overlapping line
@@ -665,7 +668,7 @@ class GridStatsPlotting:
 
             # ZOOM HACK: Force the 3D plot to fill more of its invisible bounding box
             try:
-                ax.set_box_aspect(None, zoom=1.3) # For modern matplotlib versions
+                ax.set_box_aspect(None, zoom=1.2) # For modern matplotlib versions
             except AttributeError:
                 ax.dist = 7 # Fallback for older matplotlib versions (default is 10)
             ax.margins(0) # Strip extra margins
@@ -689,10 +692,10 @@ class GridStatsPlotting:
             plt.show()
             
         else:
-            fig = plt.figure(figsize=(24, 6)) 
+            fig = plt.figure(figsize=(20.5, 6)) 
             fig.suptitle("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=22, y=1.05)
 
-            # top (view along z-axis) -> hide Z
+            # top 
             ax1 = fig.add_subplot(141, projection='3d')
             render_subplot(ax1, elev=90, azim=-90, hide_axis='z')
 
@@ -707,7 +710,6 @@ class GridStatsPlotting:
             ax4 = fig.add_subplot(144, projection='3d')
             render_subplot(ax4, elev=35, azim=230)
 
-            # AGGRESSIVE SQUEEZE: Negative wspace makes the invisible boxes overlap
             plt.subplots_adjust(wspace=-0.25, bottom=0.25, top=0.9, left=0.0, right=1.0)
             
             # Shared bottom legend
