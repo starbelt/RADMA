@@ -54,23 +54,48 @@ def load_orbit_data(data_path, sat_prefix, num_orbits):
 
     if df.empty: return pd.DataFrame(), []
     
-    # chop the dataframe down to the requested number of orbits
+    light_path = root / f'{sat_prefix}_Sat_Lighting_Times.csv'
+    if light_path.exists():
+        sunlight_intervals = parse_lighting_schedule(light_path)
+        
+        if len(sunlight_intervals) > 0:
+            t_min_orig = df['Time (EpSec)'].min()
+            first_sun_start = sunlight_intervals[0][0]
+            
+            if first_sun_start <= t_min_orig and len(sunlight_intervals) > 1:
+                t_new_start = sunlight_intervals[1][0]
+            else:
+
+                t_new_start = first_sun_start
+
+            df = df[df['Time (EpSec)'] >= t_new_start].copy()
+            
+            df['Time (EpSec)'] = df['Time (EpSec)'] - t_new_start
+            
+            shifted_intervals = []
+            for s, e in sunlight_intervals:
+                if e > t_new_start:
+
+                    shifted_intervals.append((max(0.0, s - t_new_start), e - t_new_start))
+            sunlight_intervals = shifted_intervals
+    else:
+        # Fallback if no lighting file exists: zero out the timeline anyway
+        t_min = df['Time (EpSec)'].min()
+        df['Time (EpSec)'] = df['Time (EpSec)'] - t_min
+        t_max = df['Time (EpSec)'].max()
+        sunlight_intervals = [(0.0, t_max)]
     if 'True Anomaly (deg)' in df.columns:
         ta = df['True Anomaly (deg)'].values
         diffs = np.diff(ta) 
+        # Wraps from ~360 back to 0 will result in a large negative difference
         wrap_indices = np.where(diffs < -300)[0]
         if len(wrap_indices) > 0 and len(wrap_indices) >= num_orbits:
             cutoff_idx = wrap_indices[num_orbits - 1]
             df = df.iloc[:cutoff_idx+1].copy()
+            t_max_new = df['Time (EpSec)'].max()
+            sunlight_intervals = [(s, min(e, t_max_new)) for s, e in sunlight_intervals if s <= t_max_new]
 
-    light_path = root / f'{sat_prefix}_Sat_Lighting_Times.csv'
-    if light_path.exists():
-        sunlight_intervals = parse_lighting_schedule(light_path)
-    else:
-        t_min, t_max = df['Time (EpSec)'].min(), df['Time (EpSec)'].max()
-        sunlight_intervals = [(t_min, t_max)]
-
-    print(f"[info] loaded {len(df)} rows of orbit data for {sat_prefix}.")
+    print(f"[info] loaded {len(df)} rows of orbit data for {sat_prefix}, synchronized to first full sunlight.")
     return df, sunlight_intervals
 
 def interpolate_orbit(df, sunlight_intervals, dt, cfg):

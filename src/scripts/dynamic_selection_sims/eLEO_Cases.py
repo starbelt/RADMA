@@ -31,7 +31,7 @@ if __name__ == "__main__":
         model_json_path=model_json, 
         output_dir=out_dir, 
         sat_prefix='eLEO', 
-        num_orbits=3,
+        num_orbits=5,
         model_source='Custom' 
     )
     
@@ -57,28 +57,21 @@ if __name__ == "__main__":
 
     sim_eleo.run_case_study("eLEO_01_Baseline", config_overrides=eleo_cfg, events=None)
 
-    burst_events = [
-        {'start': 2700, 'duration': 800, 'extra_demand_ips': 150.0},
-        {'start': 8245, 'duration': 800, 'extra_demand_ips': 150.0}, # Second orbit perigee
+
+    # Crank up the initial generation so the TPU starts "energy unlimited"
+    degraded_cfg = eleo_cfg.copy()
+    degraded_cfg['solar_generation_mw'] = 3600.0 
+    
+    # An eLEO orbit is roughly 90 mins (5400s). 
+    # For a 3-orbit sim (~16200s), halfway is around t=8100s.
+    # We simulate a 50% loss in solar generation by adding a massive constant 
+    # baseload (1.8W or 1800mW) from t=8100s until the end of the simulation.
+    solar_failure_events = [
+        {'start': 8100, 'duration': 15000, 'power_w': 1.8} 
     ]
-    sim_eleo.run_case_study("eLEO_02_Time_Crunch", config_overrides=eleo_cfg, events=burst_events)
-
-    drain_events = [
-        {'start': 1000, 'duration': 2000, 'power_w': 1.0},
-    ]
-    sim_eleo.run_case_study("eLEO_03_Power_Starved", config_overrides=eleo_cfg, events=drain_events)
-
-    strict_cfg = eleo_cfg.copy()
-    strict_cfg['hard_min_infs'] = 75.0 
-    sim_eleo.run_case_study("eLEO_04_Strict_Limits", config_overrides=strict_cfg, events=None)
-
-    storm_events = [
-        {'start': 2000, 'duration': 1000, 'power_w': 0.8},                     
-        {'start': 2500, 'duration': 200, 'extra_demand_ips': 120.0},           
-        {'start': 2600, 'duration': 50, 'power_w': 0.0, 'blocked': True},     
-    ]
-    sim_eleo.run_case_study("eLEO_05_Perfect_Storm", config_overrides=strict_cfg, events=storm_events)
-
+    
+    sim_eleo.run_case_study("eLEO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)
+    
     """
     A pretty solid case config!
     
