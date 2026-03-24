@@ -67,11 +67,12 @@ if __name__ == "__main__":
     # We simulate a 50% loss in solar generation by adding a massive constant 
     # baseload (1.8W or 1800mW) from t=8100s until the end of the simulation.
     solar_failure_events = [
-        {'start': 8100, 'duration': 15000, 'power_w': 1.8} 
+        # At t=8100s, permanently drop solar generation to 50% capacity
+        {'start': 8100, 'duration': 15000, 'solar_scale': 0.5} 
     ]
     
     sim_eleo.run_case_study("eLEO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)
-    
+
     """
     A pretty solid case config!
     

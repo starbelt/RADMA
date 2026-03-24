@@ -125,45 +125,49 @@ class ContinuousSatSim:
         disturb_power_w = 0.0
         extra_demand_ips = 0.0
         cpu_blocked = False
+        solar_scale = 1.0  # <--- NEW: Default to 100% solar generation
 
         if events:
             for e in events:
                 if e['start'] <= t_rel < (e['start'] + e['duration']):
                     disturb_power_w += e.get('power_w', 0.0)
                     extra_demand_ips += e.get('extra_demand_ips', 0.0)
+                    solar_scale *= e.get('solar_scale', 1.0)  # <--- NEW: Apply scaling factor
                     if e.get('blocked', False): cpu_blocked = True
 
         eclipse_pct = cfg.get('eclipse_illumination_pct', 0.0)
         effective_light = row['is_lit'] + (1.0 - row['is_lit']) * eclipse_pct
-        solar_w = (cfg['solar_generation_mw'] / 1000.0) * effective_light
+        
+        # --- UPDATED: Apply the scale directly to generation ---
+        solar_w = (cfg['solar_generation_mw'] / 1000.0) * effective_light * solar_scale
         base_w = (cfg['system_baseload_mw'] / 1000.0) + disturb_power_w
         env_energy_j = (solar_w - base_w) * dt 
         
         infs_for_this_second = (row['demand_infs_per_sec'] + extra_demand_ips) * dt
 
-        # calculate time remaining in the current sunlight/eclipse phase
         phase_end_time = row['phase_end_time']
         t_rem = max(dt, phase_end_time - t_abs)
         
-        # set target battery levels based on the current phase
         if row['is_lit'] > 0.5:
-            target_j = 3000 # limit_enable_j # TODO: Make this smart
-        else:
-            # eclipse target: limit + 5% 
-            target_j = limit_disable_j*1.01 #+ (base_w * 1.00 * t_rem)
+            upcoming_eclipse_s = row['next_eclipse_duration_s']
+            eclipse_survival_j = limit_disable_j + (base_w * upcoming_eclipse_s)
             
-        # integral prediction
+            target_j = max(limit_enable_j, eclipse_survival_j)
+            
+            battery_cap_j = cfg['battery_capacity_wh'] * 3600.0
+            target_j = min(target_j, battery_cap_j * 0.95)
+        else:
+            target_j = limit_disable_j * 1.02
+            
         net_power_w = solar_w - base_w
         expected_end_battery_j = current_battery_j + (net_power_w * t_rem)
         usable_surplus_j = expected_end_battery_j - target_j
         
-        # divvy up the bucket across the remaining frames
         if usable_surplus_j > 0:
             step_energy_budget_j = (usable_surplus_j / t_rem) * dt
         else:
             step_energy_budget_j = 0.0
             
-        # physically bound the budget so it can't overdraw the current instant surplus
         hard_surplus_j = max(0.0, current_battery_j + env_energy_j - limit_disable_j)
         step_energy_budget_j = min(step_energy_budget_j, hard_surplus_j)
 
@@ -298,6 +302,11 @@ class ContinuousSatSim:
         sim_data['is_lit_bool'] = sim_data['is_lit'] > 0.5
         sim_data['phase_id'] = (sim_data['is_lit_bool'] != sim_data['is_lit_bool'].shift()).cumsum()
         sim_data['phase_end_time'] = sim_data.groupby('phase_id')['Time (EpSec)'].transform('max')
+
+        phase_durations = sim_data.groupby('phase_id')['Time (EpSec)'].agg(lambda x: x.max() - x.min())
+        sim_data['next_eclipse_duration_s'] = sim_data['phase_id'].apply(
+            lambda pid: phase_durations.get(pid + 1, 2400.0)
+        )
 
         naive_configs = {
             'High_Accuracy': viable_models.loc[viable_models['acc_decimal'].idxmax()],
