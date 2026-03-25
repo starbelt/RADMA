@@ -3,31 +3,18 @@ import numpy as np
 import pandas as pd
 
 def set_plot_style():
+    plt.rcdefaults()  # reset any cached state before applying overrides
     plt.rcParams.update({
-        'font.size': 14,
-        'axes.titlesize': 18,
+        'font.size': 7,
+        'axes.titlesize': 9,
         'axes.labelsize': 7,
         'xtick.labelsize': 7,
         'ytick.labelsize': 7,
-        'legend.fontsize': 3,
-        'lines.linewidth': 2.5,
-        'figure.titlesize': 20,
+        'legend.fontsize': 6,
+        'lines.linewidth': 1.5,
+        'figure.titlesize': 9,
         'figure.titleweight': 'bold'
     })
-
-    """
-        plt.rcParams.update({
-        'font.size': 14,
-        'axes.titlesize': 18,
-        'axes.labelsize': 16,
-        'xtick.labelsize': 12,
-        'ytick.labelsize': 12,
-        'legend.fontsize': 12,
-        'lines.linewidth': 2.5,
-        'figure.titlesize': 20,
-        'figure.titleweight': 'bold'
-    })
-    """
 
 def _get_model_colors(model_names):
     # assigns consistent colors to models, forcing non-compute states to grey
@@ -113,7 +100,6 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     
     ax2.plot(t_plot, logs['battery_wh'], color='tab:green', linewidth=3, label='Battery Charge (Dynamic)')
     
-    # Inject requested naive battery lines
     if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
         ax2.plot(t_plot, naive_states['High_Accuracy']['logs_battery_wh'], 
                 color=baseline_colors['High_Accuracy'], linestyle='-.', alpha=0.5, linewidth=1.5, label='Battery (High Accuracy)')
@@ -137,15 +123,12 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     ax2.set_xlabel('Mission Time (s)')
     ax2.grid(True, alpha=0.3)
     
-    # Moved the legend slightly to accommodate the extra lines without covering data
-    ax2.legend(loc='upper left', frameon=True, framealpha=0.85, fontsize=10)
+    ax2.legend(loc='upper left', frameon=True, framealpha=0.85)
 
-    # Segmented yield & naive baselines
     ax2_t = ax2.twinx()
     color_dict = _get_model_colors(logs['model_name'])
     handles, labels = _plot_segmented_line(ax2_t, t_plot, logs['cum_correct'], logs['model_name'], color_dict, ylabel="Cumulative Correct Inferences")
     
-    # Inject requested naive yield lines
     if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
         line, = ax2_t.plot(t_plot, naive_states['High_Accuracy']['logs_cum_correct'], 
                         color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, label='Yield (High Accuracy)')
@@ -288,8 +271,9 @@ def plot_single(logs, case_name, output_dir):
     """
     set_plot_style()
 
-    COLOR_ORBIT = '#861F41'  
-    COLOR_SPEED = '#E5751F' 
+    # --- Hokie colors ---
+    COLOR_ORBIT = '#861F41'  # Hokie Stone maroon
+    COLOR_SPEED = '#E5751F'  # Hokie orange
     
     t = np.array(logs['time_rel'])
     alt = np.array(logs['alt_km'])
@@ -299,52 +283,47 @@ def plot_single(logs, case_name, output_dir):
     mean_alt = np.mean(alt)
     
     # 2. Find zero-crossings of (alt - mean_alt)
-    # This isolates the exact midpoints of the altitude curve
     alt_centered = alt - mean_alt
     crossings = np.where(np.diff(np.sign(alt_centered)))[0]
     
     # We need at least 3 crossings to capture a full orbit from the exact same phase
     if len(crossings) >= 3:
-        # Pick the first crossing as start, and the crossing 2 steps ahead as end (one full period)
         start_idx = crossings[0]
         end_idx = crossings[2] 
     else:
-        # Fallback if the data is shorter than one orbit
         start_idx = 0
         end_idx = len(t) - 1
         print(f"[warn] Could not isolate a full orbit for {case_name}. Plotting available data.")
         
     t_slice = t[start_idx:end_idx]
-    t_slice_norm = t_slice - t_slice[0] # Normalize time to start at 0 for the plot
+    t_slice_norm = t_slice - t_slice[0]
     alt_slice = alt[start_idx:end_idx]
     speed_slice = speed[start_idx:end_idx]
     
-    fig, ax1 = plt.subplots(figsize=(10, 5))
+    fig, ax1 = plt.subplots(figsize=(3.5, 2.4))
     
     # Plot Altitude on the left axis
     ax1.set_xlabel('Time (s)')
     ax1.set_ylabel('Orbital Altitude (km)', color=COLOR_ORBIT)
-    line1, = ax1.plot(t_slice_norm, alt_slice, color=COLOR_ORBIT, linewidth=3.5, label='Altitude')
+    line1, = ax1.plot(t_slice_norm, alt_slice, color=COLOR_ORBIT, linewidth=1.5, label='Altitude')
     ax1.tick_params(axis='y', labelcolor=COLOR_ORBIT)
     ax1.grid(True, alpha=0.3)
     
     # Plot Speed on the right axis
     ax2 = ax1.twinx()  
     ax2.set_ylabel('Ground Track Speed (km/s)', color=COLOR_SPEED)  
-    line2, = ax2.plot(t_slice_norm, speed_slice, color=COLOR_SPEED, linewidth=3.5, linestyle='--', label='Ground Speed')
+    line2, = ax2.plot(t_slice_norm, speed_slice, color=COLOR_SPEED, linewidth=1.5, linestyle='--', label='Ground Speed')
     ax2.tick_params(axis='y', labelcolor=COLOR_SPEED)
     
-    # Clean up limits to make the inverse relationship pop visually
     alt_span = np.max(alt_slice) - np.min(alt_slice)
     ax1.set_ylim(np.min(alt_slice) - (0.1 * alt_span), np.max(alt_slice) + (0.1 * alt_span))
     
     spd_span = np.max(speed_slice) - np.min(speed_slice)
     ax2.set_ylim(np.min(speed_slice) - (0.1 * spd_span), np.max(speed_slice) + (0.1 * spd_span))
     
-    # Combined Floating Legend
     lines = [line1, line2]
     labels = [l.get_label() for l in lines]
-    ax1.legend(lines, labels, loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=2, frameon=False)
+    ax1.legend(lines, labels, loc='upper center', bbox_to_anchor=(0.5, 1.18), ncol=2, frameon=False)
     
     plt.tight_layout()
     save_path = output_dir / f"{case_name}_orbit_motivation.png"
@@ -354,11 +333,10 @@ def plot_single(logs, case_name, output_dir):
 def plot_static_failure_motivation(logs, naive_states, case_name, cfg, output_dir):
     """
     Isolates and plots the failure mode of a static, high-accuracy model deployment 
-    during power constraints. Uses VT-inspired Magma colors.
+    during power constraints. Uses Hokie colors.
     """
     set_plot_style()
     
-    # Extract the static High_Accuracy baseline
     if 'High_Accuracy' not in naive_states:
         print(f"[warn] High_Accuracy baseline missing for {case_name}. Cannot plot failure.")
         return
@@ -368,46 +346,40 @@ def plot_static_failure_motivation(logs, naive_states, case_name, cfg, output_di
     yield_arr = np.array(naive_states['High_Accuracy']['logs_cum_correct'])
     lit = np.array(logs['is_lit'])
     
-    # Create a compact 2-pane plot suitable for a paper column
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 5), sharex=True, gridspec_kw={'hspace': 0.15})
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(3.5, 4.0), sharex=True, gridspec_kw={'hspace': 0.15})
     
-    # --- Colors (Hokie / Magma) ---
-    cmap = plt.get_cmap('magma')
-    COLOR_BATT = '#861F41'   # Deep maroon/purple from the lower end of magma
-    COLOR_YIELD = '#E5751F'  # Vibrant orange from the upper-middle of magma
-    COLOR_LINES = '#75787b'
+    # --- Hokie colors ---
+    COLOR_BATT = '#861F41'   # Hokie maroon
+    COLOR_YIELD = '#E5751F'  # Hokie orange
+    COLOR_LINES = '#75787b'  # neutral gray
     
     # --- Top Pane: Battery & Thresholds ---
-    ax1.plot(t_plot, battery, color=COLOR_BATT, linewidth=2.5, label='Battery (Static)')
+    ax1.plot(t_plot, battery, color=COLOR_BATT, linewidth=1.5, label='Battery (Static)')
     
     lock_limit = cfg['battery_capacity_wh'] * cfg['compute_disable_pct']
     resume_limit = cfg['battery_capacity_wh'] * cfg['compute_enable_pct']
     
-    ax1.axhline(lock_limit, color='#51c29b', linestyle=':', linewidth=1.5, label='Lockout Threshold')
-    ax1.axhline(resume_limit, color='#cd1d5b', linestyle='--', linewidth=1.5, label='Resume Threshold')
+    ax1.axhline(lock_limit, color='#51c29b', linestyle=':', linewidth=1.0, label='Lockout Threshold')
+    ax1.axhline(resume_limit, color='#cd1d5b', linestyle='--', linewidth=1.0, label='Resume Threshold')
     
-    # Auto-detect the failure point (first time battery dips below lockout)
     failure_idx = np.where(battery < lock_limit)[0]
     if len(failure_idx) > 0:
-        failure_time = t_plot[failure_idx[0]]
-        # Draw vertical line across both panes
-        ax1.axvline(x=15000, color=COLOR_LINES, linestyle='-.', linewidth=1.5, label='Power Degredation')
-        ax2.axvline(x=15000, color=COLOR_LINES, linestyle='-.', linewidth=1.5)
+        ax1.axvline(x=15000, color=COLOR_LINES, linestyle='-.', linewidth=1.0, label='Power Degradation')
+        ax2.axvline(x=15000, color=COLOR_LINES, linestyle='-.', linewidth=1.0)
     
-    # Shade sunlight intervals
     ax1.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax1.get_xaxis_transform(), 
                     color='gold', alpha=0.15, label='Sunlight')
     
     ax1.set_ylabel('Battery (Wh)')
-    ax1.legend(loc='upper right', frameon=True, framealpha=0.9, fontsize=8)
+    ax1.legend(loc='upper right', frameon=True, framealpha=0.9)
     ax1.grid(True, alpha=0.3)
     
     # --- Bottom Pane: Cumulative Yield ---
-    ax2.plot(t_plot, yield_arr, color=COLOR_YIELD, linewidth=2.5, label='Cumulative Yield')
+    ax2.plot(t_plot, yield_arr, color=COLOR_YIELD, linewidth=1.5, label='Cumulative Yield')
     
     ax2.set_ylabel('Total Inferences')
     ax2.set_xlabel('Mission Time (s)')
-    ax2.legend(loc='lower right', frameon=True, framealpha=0.9, fontsize=8)
+    ax2.legend(loc='lower right', frameon=True, framealpha=0.9)
     ax2.grid(True, alpha=0.3)
     
     plt.tight_layout()
