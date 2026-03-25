@@ -1223,7 +1223,7 @@ def plot_pretrained_from_compiled_json(json_path: pathlib.Path, filename: pathli
     plot_row(0, energy, "Energy per Inference", "mJ")
     
     # Row 1: Latency
-    plot_row(1, latency, "Measured Latency", "ms")
+    plot_row(1, latency, "Inference Latency", "ms")
     
     # Row 2: Accuracy
     # Set to 115 to ensure the horizontal text fits above the high accuracy bars
