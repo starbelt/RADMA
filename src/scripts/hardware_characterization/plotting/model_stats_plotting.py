@@ -1239,6 +1239,101 @@ def plot_pretrained_from_compiled_json(json_path: pathlib.Path, filename: pathli
     print(f"[PLOT] Saved Pre-Trained summary plot to {filename}")
     plt.close(fig)
 
+def plot_pretrained_correct_metrics_from_json(json_path: pathlib.Path, filename: pathlib.Path):
+    """
+    Reads compiled_characterization.json, filters for specific PreTrained models,
+    calculates Correct Inf/Sec and Correct Inf/Joule, and plots a 2-row figure
+    formatted for a single-column paper layout.
+    """
+    import json
+    import numpy as np
+    import matplotlib.pyplot as plt
+    
+    if not json_path.exists():
+        print(f"[ERROR] JSON file not found: {json_path}")
+        return
+        
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+        
+    # Apply the same exclusions to match the standard metrics plot
+    exclusions = [
+        "MobileNet V1 (TF_ver_2.0)", 
+        "MobileNet V2 (TF_ver_2.0)", 
+        "Inception V2"
+    ]
+    
+    # Filter for pre-trained models and apply exclusions
+    pretrained = [
+        d for d in data 
+        if d.get("Source") == "PreTrained" and d.get("Model name") not in exclusions
+    ]
+    
+    # Sort identically (by Inference Time) to maintain color/position consistency
+    pretrained.sort(key=lambda x: x["Measured Inference Time (ms)"])
+    
+    names = [d["Model name"] for d in pretrained]
+    
+    correct_inf_sec = []
+    correct_inf_joule = []
+    
+    # Calculate the derived metrics
+    for d in pretrained:
+        acc_frac = d["Top-1 Accuracy"] / 100.0
+        
+        # 1000 / ms = Inf/Sec
+        inf_sec = 1000.0 / d["Measured Inference Time (ms)"]
+        correct_inf_sec.append(inf_sec * acc_frac)
+        
+        # 1000 / mJ = Inf/Joule
+        inf_joule = 1000.0 / d["Energy per Inference (mJ)"]
+        correct_inf_joule.append(inf_joule * acc_frac)
+    
+    x_pos = np.arange(len(names))
+    
+    # Magma colorway mapped across the models
+    cmap = plt.get_cmap('magma_r')
+    colors = cmap(np.linspace(0.2, 0.8, len(names)))
+    
+    # Sized for a single-column paper layout (slightly shorter since it's only 2 rows)
+    fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(7, 6.5))
+    
+    def plot_row(ax_idx, data_vals, title, ylabel):
+        ax = axes[ax_idx]
+        ax.bar(x_pos, data_vals, color=colors)
+        
+        # Paper-appropriate font sizes
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.tick_params(axis="y", labelsize=10)
+        ax.grid(True, axis='y', linestyle='--', alpha=0.3)
+        
+        # 35% headroom for horizontal text
+        ax.set_ylim(0, max(data_vals) * 1.35) 
+            
+        for j, val in enumerate(data_vals):
+            ax.text(
+                x_pos[j], val * 1.05, f"{val:.1f}", 
+                ha='center', va='bottom', fontsize=10, rotation=0
+            )
+
+    # Row 0: Correct Inferences per Second (Throughput)
+    plot_row(0, correct_inf_sec, "Correct Inferences per Second", "Inf / Sec")
+    
+    # Row 1: Correct Inferences per Joule (Efficiency)
+    plot_row(1, correct_inf_joule, "Correct Inferences per Joule", "Inf / Joule")
+
+    # X-Axis configuration
+    axes[1].set_xticks(x_pos)
+    axes[1].set_xticklabels(names, rotation=45, ha="right", fontsize=11)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    print(f"[PLOT] Saved Pre-Trained correct metrics plot to {filename}")
+    plt.close(fig)
+
+
+
 if __name__ == "__main__":
 
     REPO_ROOT = get_repo_root()
@@ -1250,8 +1345,10 @@ if __name__ == "__main__":
 
     json_path = REPO_ROOT / "data/compiled_characterization.json"
     pretrained_out_path = REPO_ROOT / "results/plots/pretrained_grouped_metrics.png"
-    
     plot_pretrained_from_compiled_json(json_path, pretrained_out_path)
+
+    pretrained_out_correct = REPO_ROOT / "results/plots/pretrained_correct_metrics.png"
+    plot_pretrained_correct_metrics_from_json(json_path, pretrained_out_correct)
 
     ## Baseline Model Parameter Plotting
     #plots.img_class_plt()
