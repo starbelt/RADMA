@@ -1,10 +1,31 @@
-import argparse, subprocess, time, csv, pathlib
+import argparse, subprocess, time, csv, pathlib,sys
 
 import numpy as np
 import pandas as pd
-from libs.coral_tpu_characterization.src.scripts.utils.saleae_parsing import SaleaeOutputParsing
 from datetime import datetime
 from saleae import automation # type:ignore - I promise it exists
+
+
+current_file = pathlib.Path(__file__).resolve()
+project_root = None
+for parent in current_file.parents:
+    if parent.name == "CoralGUI":
+        project_root = parent
+        break
+
+if project_root:
+    sys.path.insert(0, str(project_root))
+else:
+    sys.path.insert(0, str(current_file.parents[5]))
+    
+try:
+    from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
+    ROOT_DIR = get_repo_root()
+except ImportError:
+    ROOT_DIR = pathlib.Path(".").resolve()
+    
+from libs.coral_tpu_characterization.src.scripts.utils.saleae_parsing import SaleaeOutputParsing
+
 
 def wait_for_serial(port: str, timeout=30):
     """Waits until the serial port is open, or raises a timeout"""
