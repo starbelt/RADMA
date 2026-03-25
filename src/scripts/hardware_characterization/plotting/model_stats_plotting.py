@@ -6,11 +6,29 @@ import numpy as np
 import matplotlib.pyplot as plt
 from os import path
 from adjustText import adjust_text
+
+current_file = pathlib.Path(__file__).resolve()
+project_root = None
+for parent in current_file.parents:
+    if parent.name == "CoralGUI":
+        project_root = parent
+        break
+
+if project_root:
+    sys.path.insert(0, str(project_root))
+else:
+    sys.path.insert(0, str(current_file.parents[5]))
+    
+try:
+    from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
+    ROOT_DIR = get_repo_root()
+except ImportError:
+    ROOT_DIR = pathlib.Path(".").resolve()
+
 from libs.coral_tpu_characterization.src.scripts.utils.ParamCounts import ParamCounts
 from libs.coral_tpu_characterization.src.scripts.utils.saleae_parsing import SaleaeOutputParsing
 from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
 
-REPO_ROOT = get_repo_root()
 
 
 # Data Collection and Sorting Functions ## 
@@ -1131,6 +1149,96 @@ class ModelStatsPlotting:
     def power_analog_trace(self):
         pass
 
+def plot_pretrained_from_compiled_json(json_path: pathlib.Path, filename: pathlib.Path):
+    """
+    Reads compiled_characterization.json, filters for specific PreTrained models,
+    and plots a 3-row stacked figure (Energy, Latency, Accuracy) formatted 
+    for a single-column paper layout.
+    """
+    import json
+    import numpy as np
+    import matplotlib.pyplot as plt
+    
+    if not json_path.exists():
+        print(f"[ERROR] JSON file not found: {json_path}")
+        return
+        
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+        
+    # Exclude specific models to clean up the plot
+    exclusions = [
+        "MobileNet V1 (TF_ver_2.0)", 
+        "MobileNet V2 (TF_ver_2.0)", 
+        "Inception V2"
+    ]
+    
+    # Filter for pre-trained models and apply exclusions
+    pretrained = [
+        d for d in data 
+        if d.get("Source") == "PreTrained" and d.get("Model name") not in exclusions
+    ]
+    
+    # Sort by Inference Time for a clean visual progression
+    pretrained.sort(key=lambda x: x["Measured Inference Time (ms)"])
+    
+    names = [d["Model name"] for d in pretrained]
+    latency = [d["Measured Inference Time (ms)"] for d in pretrained]
+    energy = [d["Energy per Inference (mJ)"] for d in pretrained]
+    accuracy = [d["Top-1 Accuracy"] for d in pretrained]
+    
+    x_pos = np.arange(len(names))
+    
+    # Magma colorway mapped across the models (matching tpunet_plotting)
+    cmap = plt.get_cmap('magma_r')
+    colors = cmap(np.linspace(0.2, 0.8, len(names)))
+    
+    # Sized for a single-column paper layout 
+    fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True, figsize=(7, 9))
+    
+    def plot_row(ax_idx, data_vals, title, ylabel, ylim_top=None):
+        ax = axes[ax_idx]
+        ax.bar(x_pos, data_vals, color=colors)
+        
+        # Paper-appropriate font sizes
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.tick_params(axis="y", labelsize=10)
+        ax.grid(True, axis='y', linestyle='--', alpha=0.3)
+        
+        # Add generous headroom for the horizontal text labels
+        if ylim_top: 
+            ax.set_ylim(0, ylim_top)
+        else: 
+            ax.set_ylim(0, max(data_vals) * 1.35) 
+            
+        for j, val in enumerate(data_vals):
+            # Horizontal value text, offset slightly higher
+            ax.text(
+                x_pos[j], val * 1.05, f"{val:.1f}", 
+                ha='center', va='bottom', fontsize=10, rotation=0
+            )
+
+    # Row 0: Energy
+    plot_row(0, energy, "Energy per Inference", "mJ")
+    
+    # Row 1: Latency
+    plot_row(1, latency, "Measured Latency", "ms")
+    
+    # Row 2: Accuracy
+    # Set to 115 to ensure the horizontal text fits above the high accuracy bars
+    plot_row(2, accuracy, "Top-1 Accuracy", "%", ylim_top=115) 
+
+    # X-Axis configuration
+    axes[2].set_xticks(x_pos)
+    # The X-axis model names remain angled so they don't overlap in the narrow column
+    axes[2].set_xticklabels(names, rotation=45, ha="right", fontsize=11)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    print(f"[PLOT] Saved Pre-Trained summary plot to {filename}")
+    plt.close(fig)
+
 if __name__ == "__main__":
 
     REPO_ROOT = get_repo_root()
@@ -1139,6 +1247,11 @@ if __name__ == "__main__":
     REPO_ROOT / "data/Model_Stats.xlsx",
     REPO_ROOT / "results/plots/"
     )
+
+    json_path = REPO_ROOT / "data/compiled_characterization.json"
+    pretrained_out_path = REPO_ROOT / "results/plots/pretrained_grouped_metrics.png"
+    
+    plot_pretrained_from_compiled_json(json_path, pretrained_out_path)
 
     ## Baseline Model Parameter Plotting
     #plots.img_class_plt()
