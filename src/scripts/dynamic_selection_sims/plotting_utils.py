@@ -6,10 +6,10 @@ def set_plot_style():
     plt.rcParams.update({
         'font.size': 14,
         'axes.titlesize': 18,
-        'axes.labelsize': 16,
-        'xtick.labelsize': 12,
-        'ytick.labelsize': 12,
-        'legend.fontsize': 12,
+        'axes.labelsize': 9,
+        'xtick.labelsize': 8,
+        'ytick.labelsize': 8,
+        'legend.fontsize': 7,
         'lines.linewidth': 2.5,
         'figure.titlesize': 20,
         'figure.titleweight': 'bold'
@@ -265,4 +265,75 @@ def plot_horizon_sweep(results, best_horizon, frames_per_orbit, case_name, outpu
     plt.tight_layout()
     save_path = output_dir / f"{case_name}_optimization_curve.png"
     plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single(logs, case_name, output_dir):
+    """
+    Plots exactly one orbit of altitude and ground speed, 
+    sliced to start and end exactly between apogee and perigee.
+    """
+    set_plot_style()
+
+
+    COLOR_ORBIT = '#008855'
+    COLOR_SPEED = '#224477'
+    
+    t = np.array(logs['time_rel'])
+    alt = np.array(logs['alt_km'])
+    speed = np.array(logs['speed_km_s'])
+    
+
+    mean_alt = np.mean(alt)
+    
+
+    # This isolates the exact midpoints of the altitude curve
+    alt_centered = alt - mean_alt
+    crossings = np.where(np.diff(np.sign(alt_centered)))[0]
+    
+    # We need at least 3 crossings to capture a full orbit from the exact same phase
+    if len(crossings) >= 3:
+        # Pick the first crossing as start, and the crossing 2 steps ahead as end (one full period)
+        start_idx = crossings[0]
+        end_idx = crossings[2] 
+    else:
+        # Fallback if the data is shorter than one orbit
+        start_idx = 0
+        end_idx = len(t) - 1
+        print(f"[warn] Could not isolate a full orbit for {case_name}. Plotting available data.")
+        
+    t_slice = t[start_idx:end_idx]
+    t_slice_norm = t_slice - t_slice[0] # Normalize time to start at 0 for the plot
+    alt_slice = alt[start_idx:end_idx]
+    speed_slice = speed[start_idx:end_idx]
+    
+    fig, ax1 = plt.subplots(figsize=(3.5, 2.625))
+    
+    # Plot Altitude on the left axis
+    ax1.set_xlabel('Time (s)')
+    ax1.set_ylabel('Orbital Altitude (km)', color=COLOR_ORBIT)
+    line1, = ax1.plot(t_slice_norm, alt_slice, color=COLOR_ORBIT, linewidth=3.5, label='Altitude')
+    ax1.tick_params(axis='y', labelcolor=COLOR_ORBIT)
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot Speed on the right axis
+    ax2 = ax1.twinx()  
+    ax2.set_ylabel('Ground Track Speed (km/s)', color=COLOR_SPEED)  
+    line2, = ax2.plot(t_slice_norm, speed_slice, color=COLOR_SPEED, linewidth=3.5, linestyle='--', label='Ground Speed')
+    ax2.tick_params(axis='y', labelcolor=COLOR_SPEED)
+    
+    # Clean up limits to make the inverse relationship pop visually
+    alt_span = np.max(alt_slice) - np.min(alt_slice)
+    ax1.set_ylim(np.min(alt_slice) - (0.1 * alt_span), np.max(alt_slice) + (0.1 * alt_span))
+    
+    spd_span = np.max(speed_slice) - np.min(speed_slice)
+    ax2.set_ylim(np.min(speed_slice) - (0.1 * spd_span), np.max(speed_slice) + (0.1 * spd_span))
+    
+    # Combined Floating Legend
+    lines = [line1, line2]
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=2, frameon=False)
+    
+    plt.tight_layout()
+    save_path = output_dir / f"{case_name}_orbit_motivation.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()

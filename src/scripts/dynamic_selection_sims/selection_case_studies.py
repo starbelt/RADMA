@@ -5,7 +5,7 @@ import sys
 import os
 
 from stk_utils import load_orbit_data, interpolate_orbit
-from plotting_utils import plot_orbit_dynamics, plot_mission, plot_naive_blitz, plot_horizon_sweep
+from plotting_utils import plot_orbit_dynamics, plot_mission, plot_single ,plot_naive_blitz, plot_horizon_sweep
 
 current_file = Path(__file__).resolve()
 project_root = None
@@ -410,8 +410,9 @@ class ContinuousSatSim:
                     plot_accuracy_baseline=True, 
                     plot_efficiency_baseline=True, 
                     plot_throughput_baseline=True)
-        plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
-        
+        # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
+        plot_single(logs, case_name, self.output_dir)
+
         return logs
 
     def _print_verbose_report(self, case_name, stats, logs, sim_data, cfg, naive_states=None):
