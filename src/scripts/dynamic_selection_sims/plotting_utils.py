@@ -6,14 +6,28 @@ def set_plot_style():
     plt.rcParams.update({
         'font.size': 14,
         'axes.titlesize': 18,
-        'axes.labelsize': 9,
-        'xtick.labelsize': 8,
-        'ytick.labelsize': 8,
-        'legend.fontsize': 7,
+        'axes.labelsize': 7,
+        'xtick.labelsize': 7,
+        'ytick.labelsize': 7,
+        'legend.fontsize': 3,
         'lines.linewidth': 2.5,
         'figure.titlesize': 20,
         'figure.titleweight': 'bold'
     })
+
+    """
+        plt.rcParams.update({
+        'font.size': 14,
+        'axes.titlesize': 18,
+        'axes.labelsize': 16,
+        'xtick.labelsize': 12,
+        'ytick.labelsize': 12,
+        'legend.fontsize': 12,
+        'lines.linewidth': 2.5,
+        'figure.titlesize': 20,
+        'figure.titleweight': 'bold'
+    })
+    """
 
 def _get_model_colors(model_names):
     # assigns consistent colors to models, forcing non-compute states to grey
@@ -274,18 +288,17 @@ def plot_single(logs, case_name, output_dir):
     """
     set_plot_style()
 
-
-    COLOR_ORBIT = '#008855'
-    COLOR_SPEED = '#224477'
+    COLOR_ORBIT = '#861F41'  
+    COLOR_SPEED = '#E5751F' 
     
     t = np.array(logs['time_rel'])
     alt = np.array(logs['alt_km'])
     speed = np.array(logs['speed_km_s'])
     
-
+    # 1. Find the mean altitude to identify the midpoints between apo/peri
     mean_alt = np.mean(alt)
     
-
+    # 2. Find zero-crossings of (alt - mean_alt)
     # This isolates the exact midpoints of the altitude curve
     alt_centered = alt - mean_alt
     crossings = np.where(np.diff(np.sign(alt_centered)))[0]
@@ -306,7 +319,7 @@ def plot_single(logs, case_name, output_dir):
     alt_slice = alt[start_idx:end_idx]
     speed_slice = speed[start_idx:end_idx]
     
-    fig, ax1 = plt.subplots(figsize=(3.5, 2.625))
+    fig, ax1 = plt.subplots(figsize=(10, 5))
     
     # Plot Altitude on the left axis
     ax1.set_xlabel('Time (s)')
@@ -335,5 +348,69 @@ def plot_single(logs, case_name, output_dir):
     
     plt.tight_layout()
     save_path = output_dir / f"{case_name}_orbit_motivation.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_static_failure_motivation(logs, naive_states, case_name, cfg, output_dir):
+    """
+    Isolates and plots the failure mode of a static, high-accuracy model deployment 
+    during power constraints. Uses VT-inspired Magma colors.
+    """
+    set_plot_style()
+    
+    # Extract the static High_Accuracy baseline
+    if 'High_Accuracy' not in naive_states:
+        print(f"[warn] High_Accuracy baseline missing for {case_name}. Cannot plot failure.")
+        return
+        
+    t_plot = np.array(logs['time_rel'])
+    battery = np.array(naive_states['High_Accuracy']['logs_battery_wh'])
+    yield_arr = np.array(naive_states['High_Accuracy']['logs_cum_correct'])
+    lit = np.array(logs['is_lit'])
+    
+    # Create a compact 2-pane plot suitable for a paper column
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 5), sharex=True, gridspec_kw={'hspace': 0.15})
+    
+    # --- Colors (Hokie / Magma) ---
+    cmap = plt.get_cmap('magma')
+    COLOR_BATT = '#861F41'   # Deep maroon/purple from the lower end of magma
+    COLOR_YIELD = '#E5751F'  # Vibrant orange from the upper-middle of magma
+    COLOR_LINES = '#75787b'
+    
+    # --- Top Pane: Battery & Thresholds ---
+    ax1.plot(t_plot, battery, color=COLOR_BATT, linewidth=2.5, label='Battery (Static)')
+    
+    lock_limit = cfg['battery_capacity_wh'] * cfg['compute_disable_pct']
+    resume_limit = cfg['battery_capacity_wh'] * cfg['compute_enable_pct']
+    
+    ax1.axhline(lock_limit, color='#51c29b', linestyle=':', linewidth=1.5, label='Lockout Threshold')
+    ax1.axhline(resume_limit, color='#cd1d5b', linestyle='--', linewidth=1.5, label='Resume Threshold')
+    
+    # Auto-detect the failure point (first time battery dips below lockout)
+    failure_idx = np.where(battery < lock_limit)[0]
+    if len(failure_idx) > 0:
+        failure_time = t_plot[failure_idx[0]]
+        # Draw vertical line across both panes
+        ax1.axvline(x=15000, color=COLOR_LINES, linestyle='-.', linewidth=1.5, label='Power Degredation')
+        ax2.axvline(x=15000, color=COLOR_LINES, linestyle='-.', linewidth=1.5)
+    
+    # Shade sunlight intervals
+    ax1.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax1.get_xaxis_transform(), 
+                    color='gold', alpha=0.15, label='Sunlight')
+    
+    ax1.set_ylabel('Battery (Wh)')
+    ax1.legend(loc='upper right', frameon=True, framealpha=0.9, fontsize=8)
+    ax1.grid(True, alpha=0.3)
+    
+    # --- Bottom Pane: Cumulative Yield ---
+    ax2.plot(t_plot, yield_arr, color=COLOR_YIELD, linewidth=2.5, label='Cumulative Yield')
+    
+    ax2.set_ylabel('Total Inferences')
+    ax2.set_xlabel('Mission Time (s)')
+    ax2.legend(loc='lower right', frameon=True, framealpha=0.9, fontsize=8)
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    save_path = output_dir / f"{case_name}_static_failure_motivation.png"
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()

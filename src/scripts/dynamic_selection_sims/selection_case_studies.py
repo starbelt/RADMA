@@ -5,7 +5,7 @@ import sys
 import os
 
 from stk_utils import load_orbit_data, interpolate_orbit
-from plotting_utils import plot_orbit_dynamics, plot_mission, plot_single ,plot_naive_blitz, plot_horizon_sweep
+from plotting_utils import plot_orbit_dynamics, plot_mission, plot_single ,plot_naive_blitz, plot_horizon_sweep,plot_static_failure_motivation
 
 current_file = Path(__file__).resolve()
 project_root = None
@@ -40,7 +40,7 @@ class ContinuousSatSim:
         'high_alt_target_km': 200.0, 
         'high_alt_min_px': 2,        
         
-        'initial_charge_pct': 0.55,
+        'initial_charge_pct': 0.70,
         'compute_enable_pct': 0.65,
         'compute_disable_pct': 0.45,
         
@@ -125,7 +125,7 @@ class ContinuousSatSim:
         disturb_power_w = 0.0
         extra_demand_ips = 0.0
         cpu_blocked = False
-        solar_scale = 1.0  # <--- NEW: Default to 100% solar generation
+        solar_scale = 1.0 
 
         if events:
             for e in events:
@@ -410,8 +410,10 @@ class ContinuousSatSim:
                     plot_accuracy_baseline=True, 
                     plot_efficiency_baseline=True, 
                     plot_throughput_baseline=True)
+        ## Some one-off plots for motivation and whatnot :)
         # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
-        plot_single(logs, case_name, self.output_dir)
+        # plot_single(logs, case_name, self.output_dir)
+        plot_static_failure_motivation(logs, naive_states, case_name, cfg, self.output_dir)
 
         return logs
 
