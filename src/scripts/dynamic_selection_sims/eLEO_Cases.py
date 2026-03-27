@@ -55,22 +55,22 @@ if __name__ == "__main__":
 
     })
 
-    sim_eleo.run_case_study("eLEO_01_Baseline", config_overrides=eleo_cfg, events=None)
+    # sim_eleo.run_case_study("eLEO_01_Baseline", config_overrides=eleo_cfg, events=None)
 
     # Crank up the initial generation so the TPU starts "energy unlimited"
     degraded_cfg = eleo_cfg.copy()
-    degraded_cfg['solar_generation_mw'] = 3600.0 
+    degraded_cfg['solar_generation_mw'] = 2000.0 
     
     # An eLEO orbit is roughly 90 mins (5400s). 
     # For a 3-orbit sim (~16200s), halfway is around t=8100s.
     # We simulate a 50% loss in solar generation by adding a massive constant 
     # baseload (1.8W or 1800mW) from t=8100s until the end of the simulation.
-    # solar_failure_events = [
-    #     # At t=8100s, permanently drop solar generation to 50% capacity
-    #     {'start': 8100, 'duration': 15000, 'solar_scale': 0.5} 
-    # ]
+    solar_failure_events = [
+        # At t=8100s, permanently drop solar generation to 50% capacity
+        {'start': 16500, 'duration': 50000, 'solar_scale': 0.5} 
+    ]
     
-    # sim_eleo.run_case_study("eLEO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)
+    sim_eleo.run_case_study("eLEO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)
 
     """
     A pretty solid case config!
