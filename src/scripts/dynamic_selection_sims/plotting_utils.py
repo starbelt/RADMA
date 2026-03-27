@@ -17,8 +17,11 @@ def set_plot_style():
     })
 
 def _get_model_colors(model_names):
+    # defines states that shouldn't get a magma color
+    non_compute = ['idle', 'recharge', 'blind', 'blocked', 'Idle', 'RECHARGE', 'Blind', 'BLOCKED']
+    
     # assigns consistent colors to models using magma
-    unique_models = [m for m in dict.fromkeys(model_names) if m not in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']]
+    unique_models = [m for m in dict.fromkeys(model_names) if m not in non_compute]
     
     # Sort alphabetically as a proxy for model size/complexity
     unique_models.sort()
@@ -26,8 +29,9 @@ def _get_model_colors(model_names):
     cmap = plt.get_cmap('magma')
     color_dict = {}
     
-    for m in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']:
-        color_dict[m] = '#d3d3d3' 
+    # Set all non-compute states to a distinct dark gray
+    for m in non_compute:
+        color_dict[m] = '#707070' 
         
     n_models = len(unique_models)
     for idx, m in enumerate(unique_models):
@@ -44,6 +48,7 @@ def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="cumulative yi
     start_idx = 0
     seen_labels = set()
     handles, labels = [], []
+    non_compute = ['idle', 'recharge', 'blind', 'blocked', 'Idle', 'RECHARGE', 'Blind', 'BLOCKED']
     
     for i in range(1, len(categories)):
         if categories[i] != categories[i-1] or i == len(categories) - 1:
@@ -51,7 +56,8 @@ def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="cumulative yi
             current_cat = categories[start_idx]
             
             label = None
-            if current_cat not in seen_labels and current_cat not in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']:
+            # Only add to legend if it's a real model we haven't seen yet
+            if current_cat not in seen_labels and current_cat not in non_compute:
                 label = current_cat
                 seen_labels.add(current_cat)
                 
