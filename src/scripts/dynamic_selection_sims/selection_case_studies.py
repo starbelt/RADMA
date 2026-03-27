@@ -40,7 +40,7 @@ class ContinuousSatSim:
         'high_alt_target_km': 200.0, 
         'high_alt_min_px': 2,        
         
-        'initial_charge_pct': 0.70,
+        'initial_charge_pct': 0.451,
         'compute_enable_pct': 0.65,
         'compute_disable_pct': 0.45,
         
@@ -69,7 +69,7 @@ class ContinuousSatSim:
         cfg.update({
             'focal_length_mm': 85.0,
             'battery_capacity_wh': 1.5,
-            'solar_generation_mw': 1600.0, 
+            'solar_generation_mw': 1000.0, 
         })
         return cfg
 
@@ -138,7 +138,7 @@ class ContinuousSatSim:
         eclipse_pct = cfg.get('eclipse_illumination_pct', 0.0)
         effective_light = row['is_lit'] + (1.0 - row['is_lit']) * eclipse_pct
         
-        # --- UPDATED: Apply the scale directly to generation ---
+
         solar_w = (cfg['solar_generation_mw'] / 1000.0) * effective_light * solar_scale
         base_w = (cfg['system_baseload_mw'] / 1000.0) + disturb_power_w
         env_energy_j = (solar_w - base_w) * dt 
