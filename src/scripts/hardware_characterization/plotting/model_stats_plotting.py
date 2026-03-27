@@ -1166,20 +1166,17 @@ def plot_pretrained_from_compiled_json(json_path: pathlib.Path, filename: pathli
     with open(json_path, 'r') as f:
         data = json.load(f)
         
-    # Exclude specific models to clean up the plot
     exclusions = [
         "MobileNet V1 (TF_ver_2.0)", 
         "MobileNet V2 (TF_ver_2.0)", 
         "Inception V2"
     ]
     
-    # Filter for pre-trained models and apply exclusions
     pretrained = [
         d for d in data 
         if d.get("Source") == "PreTrained" and d.get("Model name") not in exclusions
     ]
     
-    # Sort by Inference Time for a clean visual progression
     pretrained.sort(key=lambda x: x["Measured Inference Time (ms)"])
     
     names = [d["Model name"] for d in pretrained]
@@ -1189,50 +1186,45 @@ def plot_pretrained_from_compiled_json(json_path: pathlib.Path, filename: pathli
     
     x_pos = np.arange(len(names))
     
-    # Magma colorway mapped across the models (matching tpunet_plotting)
     cmap = plt.get_cmap('magma_r')
     colors = cmap(np.linspace(0.2, 0.8, len(names)))
     
-    # Sized for a single-column paper layout 
-    fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True, figsize=(7, 9))
+    fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True, figsize=(7, 6))
     
     def plot_row(ax_idx, data_vals, title, ylabel, ylim_top=None):
         ax = axes[ax_idx]
-        ax.bar(x_pos, data_vals, color=colors)
+        # Added a thin dark edge to the bars for crisp print quality
+        ax.bar(x_pos, data_vals, color=colors, edgecolor='#333333', linewidth=0.8)
         
-        # Paper-appropriate font sizes
-        ax.set_title(title, fontsize=14, fontweight='bold')
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.tick_params(axis="y", labelsize=10)
-        ax.grid(True, axis='y', linestyle='--', alpha=0.3)
+        # Professional typography and spacing
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=10)
+        ax.set_ylabel(ylabel, fontsize=13)
+        ax.tick_params(axis="y", labelsize=12)
         
-        # Add generous headroom for the horizontal text labels
+        # Clean backdrop and despine (remove top/right borders)
+        ax.grid(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        
         if ylim_top: 
             ax.set_ylim(0, ylim_top)
         else: 
             ax.set_ylim(0, max(data_vals) * 1.35) 
             
         for j, val in enumerate(data_vals):
-            # Horizontal value text, offset slightly higher
+            # Bumped annotation text size
             ax.text(
-                x_pos[j], val * 1.05, f"{val:.1f}", 
-                ha='center', va='bottom', fontsize=10, rotation=0
+                x_pos[j], val * 1.05, f"{val:.0f}", 
+                ha='center', va='bottom', fontsize=12, rotation=0
             )
 
-    # Row 0: Energy
-    plot_row(0, energy, "Energy per Inference", "mJ")
-    
-    # Row 1: Latency
-    plot_row(1, latency, "Inference Latency", "ms")
-    
-    # Row 2: Accuracy
-    # Set to 115 to ensure the horizontal text fits above the high accuracy bars
-    plot_row(2, accuracy, "Top-1 Accuracy", "%", ylim_top=115) 
+    plot_row(0, energy, "Energy Consumption", "Energy (mJ)")
+    plot_row(1, latency, "Inference Latency", "Latency (ms)")
+    plot_row(2, accuracy, "Classification Accuracy", "Percent (%)", ylim_top=115) 
 
-    # X-Axis configuration
     axes[2].set_xticks(x_pos)
-    # The X-axis model names remain angled so they don't overlap in the narrow column
-    axes[2].set_xticklabels(names, rotation=45, ha="right", fontsize=11)
+    # Increased x-tick font size and aligned them perfectly with the tick marks
+    axes[2].set_xticklabels(names, rotation=45, ha="right", rotation_mode="anchor", fontsize=12)
 
     plt.tight_layout()
     plt.savefig(filename, dpi=300, bbox_inches="tight")
@@ -1256,20 +1248,17 @@ def plot_pretrained_correct_metrics_from_json(json_path: pathlib.Path, filename:
     with open(json_path, 'r') as f:
         data = json.load(f)
         
-    # Apply the same exclusions to match the standard metrics plot
     exclusions = [
         "MobileNet V1 (TF_ver_2.0)", 
         "MobileNet V2 (TF_ver_2.0)", 
         "Inception V2"
     ]
     
-    # Filter for pre-trained models and apply exclusions
     pretrained = [
         d for d in data 
         if d.get("Source") == "PreTrained" and d.get("Model name") not in exclusions
     ]
     
-    # Sort identically (by Inference Time) to maintain color/position consistency
     pretrained.sort(key=lambda x: x["Measured Inference Time (ms)"])
     
     names = [d["Model name"] for d in pretrained]
@@ -1277,61 +1266,57 @@ def plot_pretrained_correct_metrics_from_json(json_path: pathlib.Path, filename:
     correct_inf_sec = []
     correct_inf_joule = []
     
-    # Calculate the derived metrics
     for d in pretrained:
         acc_frac = d["Top-1 Accuracy"] / 100.0
-        
-        # 1000 / ms = Inf/Sec
         inf_sec = 1000.0 / d["Measured Inference Time (ms)"]
         correct_inf_sec.append(inf_sec * acc_frac)
         
-        # 1000 / mJ = Inf/Joule
         inf_joule = 1000.0 / d["Energy per Inference (mJ)"]
         correct_inf_joule.append(inf_joule * acc_frac)
     
     x_pos = np.arange(len(names))
     
-    # Magma colorway mapped across the models
     cmap = plt.get_cmap('magma_r')
     colors = cmap(np.linspace(0.2, 0.8, len(names)))
     
-    # Sized for a single-column paper layout (slightly shorter since it's only 2 rows)
-    fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(7, 6.5))
+    fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(7, 6))
     
     def plot_row(ax_idx, data_vals, title, ylabel):
         ax = axes[ax_idx]
-        ax.bar(x_pos, data_vals, color=colors)
+        # Added a thin dark edge to the bars for crisp print quality
+        ax.bar(x_pos, data_vals, color=colors, edgecolor='#333333', linewidth=0.8)
         
-        # Paper-appropriate font sizes
-        ax.set_title(title, fontsize=14, fontweight='bold')
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.tick_params(axis="y", labelsize=10)
-        ax.grid(True, axis='y', linestyle='--', alpha=0.3)
+        # Professional typography and spacing
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=10)
+        ax.set_ylabel(ylabel, fontsize=13)
+        ax.tick_params(axis="y", labelsize=12)
         
-        # 35% headroom for horizontal text
+        # Clean backdrop and despine (remove top/right borders)
+        ax.grid(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        
         ax.set_ylim(0, max(data_vals) * 1.35) 
             
         for j, val in enumerate(data_vals):
+            # Bumped annotation text size
             ax.text(
-                x_pos[j], val * 1.05, f"{val:.1f}", 
-                ha='center', va='bottom', fontsize=10, rotation=0
+                x_pos[j], val * 1.05, f"{val:.0f}", 
+                ha='center', va='bottom', fontsize=12, rotation=0
             )
 
-    # Row 0: Correct Inferences per Second (Throughput)
-    plot_row(0, correct_inf_sec, "Correct Inferences per Second", "Inf / Sec")
-    
-    # Row 1: Correct Inferences per Joule (Efficiency)
-    plot_row(1, correct_inf_joule, "Correct Inferences per Joule", "Inf / Joule")
+    # Simplified titles and updated to standard scientific abbreviations
+    plot_row(0, correct_inf_sec, "Correct Throughput", "Inf/s")
+    plot_row(1, correct_inf_joule, "Correct Energy Efficiency", "Inf/J")
 
-    # X-Axis configuration
     axes[1].set_xticks(x_pos)
-    axes[1].set_xticklabels(names, rotation=45, ha="right", fontsize=11)
+    # Increased x-tick font size and aligned them perfectly
+    axes[1].set_xticklabels(names, rotation=45, ha="right", rotation_mode="anchor", fontsize=12)
 
     plt.tight_layout()
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     print(f"[PLOT] Saved Pre-Trained correct metrics plot to {filename}")
     plt.close(fig)
-
 
 
 if __name__ == "__main__":
@@ -1382,34 +1367,34 @@ if __name__ == "__main__":
     )
 
     ## Budgeted Correct Inferences Plotting
-    print("[INFO] Generating budgeted correct inferences plots...")
+    # print("[INFO] Generating budgeted correct inferences plots...")
 
-    def Energy_in_Cap(C,V):
-        return 0.5 * C * V * V  # joules
-    def Frame_Time(H_m, FOV_deg):
-        R_E = 6371e3  # m
-        mu_E = 3.986e14  # m^3/s^2
-        R = H_m + R_E
-        V_SAT = (mu_E / R) ** 0.5  # m/s
-        FOV_rad = np.deg2rad(FOV_deg)
-        Res= 2 * H_m * np.tan(FOV_rad / 2)
-        GT = Res / V_SAT  # sec
-        return GT
+    # def Energy_in_Cap(C,V):
+    #     return 0.5 * C * V * V  # joules
+    # def Frame_Time(H_m, FOV_deg):
+    #     R_E = 6371e3  # m
+    #     mu_E = 3.986e14  # m^3/s^2
+    #     R = H_m + R_E
+    #     V_SAT = (mu_E / R) ** 0.5  # m/s
+    #     FOV_rad = np.deg2rad(FOV_deg)
+    #     Res= 2 * H_m * np.tan(FOV_rad / 2)
+    #     GT = Res / V_SAT  # sec
+    #     return GT
     
-    # Somewhat arbitrary combinations of buffer sizes and frame times
-    capcitances = [10e-3, 1e-1, 1, 5.6, 8]; # F
-    H = [600e3,600e3, 600e3, 600e3, 600e3]; # m
-    FOV = [45, 30, 15, 5, 2.5]; # degrees
+    # # Somewhat arbitrary combinations of buffer sizes and frame times
+    # capcitances = [10e-3, 1e-1, 1, 5.6, 8]; # F
+    # H = [600e3,600e3, 600e3, 600e3, 600e3]; # m
+    # FOV = [45, 30, 15, 5, 2.5]; # degrees
 
-    # Generate Budgets
-    buffers  = [Energy_in_Cap(C,5) for C in capcitances]  # joules
-    frame_times = [Frame_Time(H[i], FOV[i]) for i in range(len(H))]  # sec
+    # # Generate Budgets
+    # buffers  = [Energy_in_Cap(C,5) for C in capcitances]  # joules
+    # frame_times = [Frame_Time(H[i], FOV[i]) for i in range(len(H))]  # sec
 
-    # sort ascending
-    buffers.sort()
-    frame_times.sort()
+    # # sort ascending
+    # buffers.sort()
+    # frame_times.sort()
 
-    plots.budget_correct_loop(subset, buffers,frame_times ,REPO_ROOT/ "results")
+    # plots.budget_correct_loop(subset, buffers,frame_times ,REPO_ROOT/ "results")
 
     # matrix_winner = np.zeros((len(buffers), len(frame_times)), dtype=object)
 
