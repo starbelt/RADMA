@@ -48,7 +48,7 @@ class GridStatsPlotting:
         self.df = None
 
     def load_and_aggregate_data(self):
-        alphas = ["0.25", "0.50", "0.75", "1.0", "1.25"]
+        alphas = ["0.25", "0.50", "0.75", "1.0", "1.25", "1.50"]
         depths = [2, 4, 6, 8, 10, 12]
         
         data_rows = []

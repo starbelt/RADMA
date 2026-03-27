@@ -216,7 +216,7 @@ if __name__ == "__main__":
     
     # Custom Inputs
     CUSTOM_JSON_DIR = REPO_ROOT / "data" / "tpunet_acc"
-    CUSTOM_SALEAE_DIR = "/home/jackr/CoralGUI/results/captures_1_20"
+    CUSTOM_SALEAE_DIR = "/home/jackr/CoralGUI/results/captures"
     
     # Output
     OUTPUT_JSON_PATH = REPO_ROOT / "data" / "compiled_characterization.json"
