@@ -309,6 +309,7 @@ class ContinuousSatSim:
         )
 
         naive_configs = {
+            'True_Naive': self.models.loc[self.models['acc_decimal'].idxmax()],
             'High_Accuracy': viable_models.loc[viable_models['acc_decimal'].idxmax()],
             'High_Throughput': viable_models.loc[viable_models['correct_infs_per_sec'].idxmax()],
             'High_Efficiency': viable_models.loc[viable_models['correct_infs_per_joule'].idxmax()]
@@ -409,7 +410,8 @@ class ContinuousSatSim:
         plot_mission(logs, naive_states, case_name, cfg, self.output_dir,
                     plot_accuracy_baseline=True, 
                     plot_efficiency_baseline=True, 
-                    plot_throughput_baseline=True)
+                    plot_throughput_baseline=True,
+                    plot_true_naive_baseline=True)
         ## Some one-off plots for motivation and whatnot :)
         # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         # plot_single(logs, case_name, self.output_dir)

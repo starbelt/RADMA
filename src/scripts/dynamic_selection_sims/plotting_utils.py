@@ -17,22 +17,30 @@ def set_plot_style():
     })
 
 def _get_model_colors(model_names):
-    # assigns consistent colors to models, forcing non-compute states to grey
-    unique_models = list(dict.fromkeys(model_names))
-    cmap = plt.get_cmap('tab20')
+    # assigns consistent colors to models using magma
+    unique_models = [m for m in dict.fromkeys(model_names) if m not in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']]
+    
+    # Sort alphabetically as a proxy for model size/complexity
+    unique_models.sort()
+    
+    cmap = plt.get_cmap('magma')
     color_dict = {}
     
-    color_idx = 0
-    for m in unique_models:
-        if m in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']:
-            color_dict[m] = '#d3d3d3' 
+    for m in ['Idle', 'RECHARGE', 'Blind', 'BLOCKED']:
+        color_dict[m] = '#d3d3d3' 
+        
+    n_models = len(unique_models)
+    for idx, m in enumerate(unique_models):
+        if n_models == 1:
+            val = 0.5
         else:
-            color_dict[m] = cmap(color_idx % 20)
-            color_idx += 1
+            # Scale from 0.2 to 0.8 to avoid pure black (invisible) or pure white
+            val = 0.2 + (0.6 * idx / (n_models - 1))
+        color_dict[m] = cmap(val)
+        
     return color_dict
 
 def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="cumulative yield"):
-    # plots a single continuous line, changing colors based on the category array
     start_idx = 0
     seen_labels = set()
     handles, labels = [], []
@@ -47,8 +55,9 @@ def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="cumulative yi
                 label = current_cat
                 seen_labels.add(current_cat)
                 
+            # Thinned out linewidth for single-column width
             line, = ax.plot(t[start_idx:end_idx], y[start_idx:end_idx], 
-                    color=color_dict[current_cat], linewidth=3.5, label=label)
+                    color=color_dict[current_cat], linewidth=1.5, label=label)
             
             if label:
                 handles.append(line)
@@ -56,104 +65,101 @@ def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="cumulative yi
                 
             start_idx = i
             
-    ax.set_ylabel(ylabel, color='tab:blue')
-    ax.tick_params(axis='y', labelcolor='tab:blue')
+    ax.set_ylabel(ylabel)
     
     return handles, labels
 
-
 def plot_mission(logs, naive_states, case_name, cfg, output_dir, 
-                        plot_accuracy_baseline=False, 
-                        plot_efficiency_baseline=False, 
-                        plot_throughput_baseline=False):
+                plot_accuracy_baseline=False, 
+                plot_efficiency_baseline=False, 
+                plot_throughput_baseline=False,
+                plot_true_naive_baseline=False):
     set_plot_style()
     t_plot = np.array(logs['time_rel'])
     
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True, gridspec_kw={'hspace': 0.15})
+    fig, ax = plt.subplots(figsize=(3.5, 3.0)) 
     
-    # bump title up to make room for floating legend
-    fig.suptitle(f"Case Study Telemetry: {case_name}", y=1.05) 
-
-    ax1.plot(t_plot, logs['alt_km'], color='dimgray', label='Altitude')
-    ax1.set_ylabel('Altitude (km)')
+    # Define baseline colors
+    baseline_colors = {
+        'True_Naive': 'tab:gray',
+        'High_Accuracy': 'tab:blue', 
+        'High_Throughput': 'tab:red', 
+        'High_Efficiency': 'tab:purple'
+    }
     
-    alt_span = np.max(logs['alt_km']) - np.min(logs['alt_km'])
-    if alt_span == 0: alt_span = np.max(logs['alt_km']) * 0.1 
-    ax1.set_ylim(np.min(logs['alt_km']) - (0.1 * alt_span), np.max(logs['alt_km']) + (0.1 * alt_span))
+    # Plot Battery on left axis
+    ax.plot(t_plot, logs['battery_wh'], color='tab:green', linewidth=1.5, label='Batt (Dyn)')
     
-    ax1_t = ax1.twinx()
-    ax1_t.plot(t_plot, logs['speed_km_s'], color='tab:red', linestyle='--', alpha=0.7, label='Ground Speed')
-    ax1_t.set_ylabel('Speed (km/s)', color='tab:red')
-    
-    spd_span = np.max(logs['speed_km_s']) - np.min(logs['speed_km_s'])
-    if spd_span == 0: spd_span = np.max(logs['speed_km_s']) * 0.1
-    ax1_t.set_ylim(np.min(logs['speed_km_s']) - (0.1 * spd_span), np.max(logs['speed_km_s']) + (0.1 * spd_span))
-    
-    lines_1, labels_1 = ax1.get_legend_handles_labels()
-    lines_2, labels_2 = ax1_t.get_legend_handles_labels()
-    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='lower center', 
-            bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
-    ax1.grid(True, alpha=0.3)
-    
-    # Define baseline colors early so we can use them for both axes
-    baseline_colors = {'High_Accuracy': 'tab:blue', 'High_Throughput': 'tab:red', 'High_Efficiency': 'tab:purple'}
-    
-    ax2.plot(t_plot, logs['battery_wh'], color='tab:green', linewidth=3, label='Battery Charge (Dynamic)')
-    
+    # Optional battery baselines (keeping them thin and faded so it's not too noisy)
+    if plot_true_naive_baseline and 'True_Naive' in naive_states:
+        ax.plot(t_plot, naive_states['True_Naive']['logs_battery_wh'], 
+                color=baseline_colors['True_Naive'], linestyle='-.', alpha=0.5, linewidth=1.0)
+                
     if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
-        ax2.plot(t_plot, naive_states['High_Accuracy']['logs_battery_wh'], 
-                color=baseline_colors['High_Accuracy'], linestyle='-.', alpha=0.5, linewidth=1.5, label='Battery (High Accuracy)')
+        ax.plot(t_plot, naive_states['High_Accuracy']['logs_battery_wh'], 
+                color=baseline_colors['High_Accuracy'], linestyle='-.', alpha=0.5, linewidth=1.0)
         
     if plot_throughput_baseline and 'High_Throughput' in naive_states:
-        ax2.plot(t_plot, naive_states['High_Throughput']['logs_battery_wh'], 
-                color=baseline_colors['High_Throughput'], linestyle='-.', alpha=0.5, linewidth=1.5, label='Battery (High Throughput)')
+        ax.plot(t_plot, naive_states['High_Throughput']['logs_battery_wh'], 
+                color=baseline_colors['High_Throughput'], linestyle='-.', alpha=0.5, linewidth=1.0)
         
     if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
-        ax2.plot(t_plot, naive_states['High_Efficiency']['logs_battery_wh'], 
-                color=baseline_colors['High_Efficiency'], linestyle='-.', alpha=0.5, linewidth=1.5, label='Battery (High Efficiency)')
+        ax.plot(t_plot, naive_states['High_Efficiency']['logs_battery_wh'], 
+                color=baseline_colors['High_Efficiency'], linestyle='-.', alpha=0.5, linewidth=1.0)
 
-    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', label='Hard Lock Limit')
-    ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='tab:green', linestyle=':', label='Resume Limit')
+    # Battery Limits
+    ax.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', linewidth=1.0, label='Lock Limit')
+    ax.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='tab:green', linestyle=':', linewidth=1.0, label='Resume Limit')
     
     lit = np.array(logs['is_lit'])
-    ax2.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax2.get_xaxis_transform(), 
-                    color='gold', alpha=0.15, label='Sunlight Interval')
+    ax.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax.get_xaxis_transform(), 
+                    color='gold', alpha=0.15, label='Sunlight')
     
-    ax2.set_ylabel('Battery (Wh)')
-    ax2.set_xlabel('Mission Time (s)')
-    ax2.grid(True, alpha=0.3)
+    ax.set_ylabel('Battery (Wh)')
+    ax.set_xlabel('Mission Time (s)')
+    ax.grid(True, alpha=0.3)
     
-    ax2.legend(loc='upper left', frameon=True, framealpha=0.85)
-
-    ax2_t = ax2.twinx()
+    # Yield on Right Axis
+    ax_t = ax.twinx()
     color_dict = _get_model_colors(logs['model_name'])
-    handles, labels = _plot_segmented_line(ax2_t, t_plot, logs['cum_correct'], logs['model_name'], color_dict, ylabel="Cumulative Correct Inferences")
+    handles, labels = _plot_segmented_line(ax_t, t_plot, logs['cum_correct'], logs['model_name'], color_dict, ylabel="Cumulative Yield")
     
-    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
-        line, = ax2_t.plot(t_plot, naive_states['High_Accuracy']['logs_cum_correct'], 
-                        color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, label='Yield (High Accuracy)')
+    # Baseline Yields
+    if plot_true_naive_baseline and 'True_Naive' in naive_states:
+        line, = ax_t.plot(t_plot, naive_states['True_Naive']['logs_cum_correct'], 
+                        color=baseline_colors['True_Naive'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (True Naive)')
         handles.append(line)
-        labels.append('Yield (High Accuracy)')
+        labels.append('Yield (True Naive)')
+
+    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
+        line, = ax_t.plot(t_plot, naive_states['High_Accuracy']['logs_cum_correct'], 
+                        color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (High Acc)')
+        handles.append(line)
+        labels.append('Yield (High Acc)')
         
     if plot_throughput_baseline and 'High_Throughput' in naive_states:
-        line, = ax2_t.plot(t_plot, naive_states['High_Throughput']['logs_cum_correct'], 
-                        color=baseline_colors['High_Throughput'], linestyle='--', alpha=0.8, label='Yield (High Throughput)')
+        line, = ax_t.plot(t_plot, naive_states['High_Throughput']['logs_cum_correct'], 
+                        color=baseline_colors['High_Throughput'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (High Thr)')
         handles.append(line)
-        labels.append('Yield (High Throughput)')
+        labels.append('Yield (High Thr)')
         
     if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
-        line, = ax2_t.plot(t_plot, naive_states['High_Efficiency']['logs_cum_correct'], 
-                        color=baseline_colors['High_Efficiency'], linestyle='--', alpha=0.8, label='Yield (High Efficiency)')
+        line, = ax_t.plot(t_plot, naive_states['High_Efficiency']['logs_cum_correct'], 
+                        color=baseline_colors['High_Efficiency'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (High Eff)')
         handles.append(line)
-        labels.append('Yield (High Efficiency)')
+        labels.append('Yield (High Eff)')
 
-    if handles:
-        ncol = min(4, len(labels))
-        ax2_t.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.15), 
-                    ncol=ncol, frameon=False, title="Performance & Active Models")
-        
+    # Combine legends into one multi-column block positioned completely below the plot
+    h_batt, l_batt = ax.get_legend_handles_labels()
+    all_handles = h_batt + handles
+    all_labels = l_batt + labels
+
+    ax.legend(all_handles, all_labels, loc='upper center', bbox_to_anchor=(0.5, -0.22), 
+            ncol=3, frameon=False, fontsize=6)
+
+    plt.tight_layout()
     save_path = output_dir / f"{case_name}_STATIC.png"
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.savefig(save_path, dpi=300, bbox_inches='tight') # bbox_inches catches the floating legend
     plt.close()
 
 def plot_orbit_dynamics(logs, case_name, output_dir):
