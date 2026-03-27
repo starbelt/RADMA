@@ -77,9 +77,10 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     set_plot_style()
     t_plot = np.array(logs['time_rel'])
     
-    fig, ax = plt.subplots(figsize=(3.5, 3.0)) 
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(3.5, 4.5), sharex=True, gridspec_kw={'hspace': 0.15}) 
     
-    # Define baseline colors
+    fig.suptitle(f"System Evaluation: {case_name.replace('_', ' ')}", fontsize=8, y=0.96)
+
     baseline_colors = {
         'True_Naive': 'tab:gray',
         'High_Accuracy': 'tab:blue', 
@@ -87,79 +88,111 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
         'High_Efficiency': 'tab:purple'
     }
     
-    # Plot Battery on left axis
-    ax.plot(t_plot, logs['battery_wh'], color='tab:green', linewidth=1.5, label='Batt (Dyn)')
+    color_dict = _get_model_colors(logs['model_name'])
     
-    # Optional battery baselines (keeping them thin and faded so it's not too noisy)
+    yield_scaled = np.array(logs['cum_correct']) / 100000.0
+    handles_yield, labels_yield = _plot_segmented_line(ax1, t_plot, yield_scaled, logs['model_name'], color_dict, ylabel="Yield ($10^5$ infs)")
+    
     if plot_true_naive_baseline and 'True_Naive' in naive_states:
-        ax.plot(t_plot, naive_states['True_Naive']['logs_battery_wh'], 
+        line, = ax1.plot(t_plot, np.array(naive_states['True_Naive']['logs_cum_correct']) / 100000.0, 
+                        color=baseline_colors['True_Naive'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (True Naive)')
+        handles_yield.append(line)
+        labels_yield.append('Yield (True Naive)')
+
+    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
+        line, = ax1.plot(t_plot, np.array(naive_states['High_Accuracy']['logs_cum_correct']) / 100000.0, 
+                        color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (High Acc)')
+        handles_yield.append(line)
+        labels_yield.append('Yield (High Acc)')
+        
+    if plot_throughput_baseline and 'High_Throughput' in naive_states:
+        line, = ax1.plot(t_plot, np.array(naive_states['High_Throughput']['logs_cum_correct']) / 100000.0, 
+                        color=baseline_colors['High_Throughput'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (High Thr)')
+        handles_yield.append(line)
+        labels_yield.append('Yield (High Thr)')
+        
+    if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
+        line, = ax1.plot(t_plot, np.array(naive_states['High_Efficiency']['logs_cum_correct']) / 100000.0, 
+                        color=baseline_colors['High_Efficiency'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (High Eff)')
+        handles_yield.append(line)
+        labels_yield.append('Yield (High Eff)')
+
+    ax1.grid(True, alpha=0.3)
+
+    handles_batt, labels_batt = _plot_segmented_line(ax2, t_plot, logs['battery_wh'], logs['model_name'], color_dict, ylabel="Battery (Wh)")
+    
+    if plot_true_naive_baseline and 'True_Naive' in naive_states:
+        ax2.plot(t_plot, naive_states['True_Naive']['logs_battery_wh'], 
                 color=baseline_colors['True_Naive'], linestyle='-.', alpha=0.5, linewidth=1.0)
                 
     if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
-        ax.plot(t_plot, naive_states['High_Accuracy']['logs_battery_wh'], 
+        ax2.plot(t_plot, naive_states['High_Accuracy']['logs_battery_wh'], 
                 color=baseline_colors['High_Accuracy'], linestyle='-.', alpha=0.5, linewidth=1.0)
         
     if plot_throughput_baseline and 'High_Throughput' in naive_states:
-        ax.plot(t_plot, naive_states['High_Throughput']['logs_battery_wh'], 
+        ax2.plot(t_plot, naive_states['High_Throughput']['logs_battery_wh'], 
                 color=baseline_colors['High_Throughput'], linestyle='-.', alpha=0.5, linewidth=1.0)
         
     if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
-        ax.plot(t_plot, naive_states['High_Efficiency']['logs_battery_wh'], 
+        ax2.plot(t_plot, naive_states['High_Efficiency']['logs_battery_wh'], 
                 color=baseline_colors['High_Efficiency'], linestyle='-.', alpha=0.5, linewidth=1.0)
 
-    # Battery Limits
-    ax.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', linewidth=1.0, label='Lock Limit')
-    ax.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='tab:green', linestyle=':', linewidth=1.0, label='Resume Limit')
+    line_lock = ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', linewidth=1.0, label='Lock Limit')
+    line_resume = ax2.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='tab:green', linestyle=':', linewidth=1.0, label='Resume Limit')
     
     lit = np.array(logs['is_lit'])
-    ax.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax.get_xaxis_transform(), 
+    fill_sun = ax2.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax2.get_xaxis_transform(), 
                     color='gold', alpha=0.15, label='Sunlight')
     
-    ax.set_ylabel('Battery (Wh)')
-    ax.set_xlabel('Mission Time (s)')
-    ax.grid(True, alpha=0.3)
+    ax2.set_xlabel('Mission Time (s)')
+    ax2.grid(True, alpha=0.3)
     
-    # Yield on Right Axis
-    ax_t = ax.twinx()
-    color_dict = _get_model_colors(logs['model_name'])
-    handles, labels = _plot_segmented_line(ax_t, t_plot, logs['cum_correct'], logs['model_name'], color_dict, ylabel="Cumulative Yield")
+    # --- LEGEND HANDLING & SORTING ---
+    unique_labels = []
+    unique_handles = []
     
-    # Baseline Yields
-    if plot_true_naive_baseline and 'True_Naive' in naive_states:
-        line, = ax_t.plot(t_plot, naive_states['True_Naive']['logs_cum_correct'], 
-                        color=baseline_colors['True_Naive'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (True Naive)')
-        handles.append(line)
-        labels.append('Yield (True Naive)')
+    all_raw_handles = handles_yield + [line_lock, line_resume, fill_sun]
+    all_raw_labels = labels_yield + ['Lock Limit', 'Resume Limit', 'Sunlight']
+    
+    # 1. Deduplicate
+    for h, l in zip(all_raw_handles, all_raw_labels):
+        if l not in unique_labels:
+            unique_labels.append(l)
+            unique_handles.append(h)
 
-    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
-        line, = ax_t.plot(t_plot, naive_states['High_Accuracy']['logs_cum_correct'], 
-                        color=baseline_colors['High_Accuracy'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (High Acc)')
-        handles.append(line)
-        labels.append('Yield (High Acc)')
-        
-    if plot_throughput_baseline and 'High_Throughput' in naive_states:
-        line, = ax_t.plot(t_plot, naive_states['High_Throughput']['logs_cum_correct'], 
-                        color=baseline_colors['High_Throughput'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (High Thr)')
-        handles.append(line)
-        labels.append('Yield (High Thr)')
-        
-    if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
-        line, = ax_t.plot(t_plot, naive_states['High_Efficiency']['logs_cum_correct'], 
-                        color=baseline_colors['High_Efficiency'], linestyle='--', alpha=0.8, linewidth=1.2, label='Yield (High Eff)')
-        handles.append(line)
-        labels.append('Yield (High Eff)')
+    # 2. Categorize into logical groups
+    system_names = ['Lock Limit', 'Resume Limit', 'Sunlight']
+    sys_group = []
+    model_group = []
+    baseline_group = []
+    
+    for h, l in zip(unique_handles, unique_labels):
+        if l in system_names:
+            sys_group.append((h, l))
+        elif l.startswith('Yield'):
+            baseline_group.append((h, l))
+        else:
+            model_group.append((h, l))
+            
+    # 3. Sort each group
+    sys_group.sort(key=lambda x: system_names.index(x[1])) # Preserve defined exact order
+    model_group.sort(key=lambda x: x[1])                   # Alphabetical (groups alpha, then depth natively)
+    baseline_group.sort(key=lambda x: x[1])                # Alphabetical 
+    
+    # 4. Recombine (System Limits -> Dynamic Models -> Baselines)
+    sorted_legend = sys_group + model_group + baseline_group
+    
+    final_handles = [x[0] for x in sorted_legend]
+    final_labels = [x[1] for x in sorted_legend]
 
-    # Combine legends into one multi-column block positioned completely below the plot
-    h_batt, l_batt = ax.get_legend_handles_labels()
-    all_handles = h_batt + handles
-    all_labels = l_batt + labels
-
-    ax.legend(all_handles, all_labels, loc='upper center', bbox_to_anchor=(0.5, -0.22), 
+    ax2.legend(final_handles, final_labels, loc='upper center', bbox_to_anchor=(0.5, -0.25), 
             ncol=3, frameon=False, fontsize=6)
-
+            
     plt.tight_layout()
+    plt.subplots_adjust(top=0.90) 
+    
     save_path = output_dir / f"{case_name}_STATIC.png"
-    plt.savefig(save_path, dpi=300, bbox_inches='tight') # bbox_inches catches the floating legend
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_orbit_dynamics(logs, case_name, output_dir):

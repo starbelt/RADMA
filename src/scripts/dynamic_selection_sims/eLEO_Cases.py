@@ -31,7 +31,7 @@ if __name__ == "__main__":
         model_json_path=model_json, 
         output_dir=out_dir, 
         sat_prefix='eLEO', 
-        num_orbits=5,
+        num_orbits=10,
         model_source='Custom' 
     )
     
@@ -51,12 +51,11 @@ if __name__ == "__main__":
 
         # power
         'battery_capacity_wh': 1.5,
-        'solar_generation_mw': 1800.0, 
+        'solar_generation_mw': 1600.0, 
 
     })
 
     sim_eleo.run_case_study("eLEO_01_Baseline", config_overrides=eleo_cfg, events=None)
-
 
     # Crank up the initial generation so the TPU starts "energy unlimited"
     degraded_cfg = eleo_cfg.copy()
