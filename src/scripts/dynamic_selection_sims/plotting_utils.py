@@ -84,8 +84,6 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     t_plot = np.array(logs['time_rel'])
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(3.5, 4.5), sharex=True, gridspec_kw={'hspace': 0.15}) 
-    
-    fig.suptitle(f"System Evaluation: {case_name.replace('_', ' ')}", fontsize=8, y=0.96)
 
     baseline_colors = {
         'True_Naive': 'tab:gray',
@@ -153,20 +151,20 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     ax2.set_xlabel('Mission Time (s)')
     ax2.grid(True, alpha=0.3)
     
-    # --- LEGEND HANDLING & SORTING ---
+
     unique_labels = []
     unique_handles = []
     
     all_raw_handles = handles_yield + [line_lock, line_resume, fill_sun]
     all_raw_labels = labels_yield + ['Lock Limit', 'Resume Limit', 'Sunlight']
     
-    # 1. Deduplicate
+    # Deduplicate
     for h, l in zip(all_raw_handles, all_raw_labels):
         if l not in unique_labels:
             unique_labels.append(l)
             unique_handles.append(h)
 
-    # 2. Categorize into logical groups
+    # Categorize into logical groups
     system_names = ['Lock Limit', 'Resume Limit', 'Sunlight']
     sys_group = []
     model_group = []
@@ -180,12 +178,12 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
         else:
             model_group.append((h, l))
             
-    # 3. Sort each group
+    # Sort each group
     sys_group.sort(key=lambda x: system_names.index(x[1])) # Preserve defined exact order
     model_group.sort(key=lambda x: x[1])                   # Alphabetical (groups alpha, then depth natively)
     baseline_group.sort(key=lambda x: x[1])                # Alphabetical 
     
-    # 4. Recombine (System Limits -> Dynamic Models -> Baselines)
+    # Recombine (System Limits -> Dynamic Models -> Baselines)
     sorted_legend = sys_group + model_group + baseline_group
     
     final_handles = [x[0] for x in sorted_legend]
