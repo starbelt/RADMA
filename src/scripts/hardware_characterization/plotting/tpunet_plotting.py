@@ -730,7 +730,7 @@ if __name__ == "__main__":
     
     # RELATIVE PATHS
     JSON_DIR = REPO_ROOT / "data/tpunet_acc"
-    SALEAE_ROOT = REPO_ROOT / "../../results/captures_1_20" # so cursed
+    SALEAE_ROOT = REPO_ROOT / "../../results/captures" 
     OUTPUT_DIR = REPO_ROOT / "results/plots/grid_analysis"
 
     plotter = GridStatsPlotting(JSON_DIR, SALEAE_ROOT, OUTPUT_DIR)
