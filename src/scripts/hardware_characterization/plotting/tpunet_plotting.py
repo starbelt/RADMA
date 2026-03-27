@@ -216,48 +216,40 @@ class GridStatsPlotting:
 
     # Standard Metrics grouped by alpha, ordered by depth
     def plot_grouped_metrics(self, filename="grid_grouped_metrics.png"):
-        """
-        Plots 4 rows (Power, Energy, Latency, Accuracy) grouped by Alpha.
-        Bars represent different Depths.
-        """
         if self.df is None or self.df.empty: return
 
         alphas = sorted(self.df['Alpha'].unique())
         depths = sorted(self.df['Depth'].unique())
         
-        x = np.arange(len(alphas))  # label locations for alphas
-        width = 0.8 / len(depths)   # width of individual bars
+        x = np.arange(len(alphas))  
+        width = 0.8 / len(depths)   
 
-        # Colors for depth levels
         cmap = plt.get_cmap('magma_r') 
         colors = cmap(np.linspace(0.2, 0.8, len(depths)))
 
-        fig, axes = plt.subplots(nrows=5, ncols=1, sharex=True, figsize=(20, 22))
+        # Use constrained_layout=True instead of tight_layout()
+        fig, axes = plt.subplots(nrows=5, ncols=1, sharex=True, figsize=(20, 25), constrained_layout=True)
 
-        # Helper to plot one metric
         def plot_group_row(ax_idx, metric_col, title, ylabel, ylim_top=None):
-            if self.df is None or self.df.empty: return # How do i handle var scope here?
             ax = axes[ax_idx]
-            
             for i, depth in enumerate(depths):
                 subset = self.df[self.df['Depth'] == depth]
-                
-                # Align values to correct alpha index
                 heights = []
                 for alpha in alphas:
                     val = subset[subset['Alpha'] == alpha][metric_col]
                     heights.append(val.item() if not val.empty else 0)
                 
                 offset = (i - len(depths)/2) * width + width/2
-                # Only label the first plot for the legend
                 label = f'Depth={depth}' if ax_idx == 0 else ""
-                rects = ax.bar(x + offset, heights, width, label=label, color=colors[i])
+                ax.bar(x + offset, heights, width, label=label, color=colors[i])
                 
-                # Optional: Add text labels on bars if needed (can get crowded)
                 for j, h in enumerate(heights):
-                    if h > 0: ax.text(x[j] + offset, h*1.01, f"{h:.1f}", ha='center', va='bottom', fontsize=18, rotation=45)
+                    if h > 0:
+                        # Reduced label size slightly to save vertical space
+                        ax.text(x[j] + offset, h*1.01, f"{h:.1f}", 
+                                ha='center', va='bottom', fontsize=14, rotation=45)
 
-            ax.set_title(title, fontsize=28)
+            ax.set_title(title, fontsize=28, pad=20)
             ax.set_ylabel(ylabel, fontsize=24)
             ax.tick_params(axis="y", labelsize=20)
             ax.grid(True, axis='y', linestyle='--', alpha=0.3)
@@ -265,28 +257,22 @@ class GridStatsPlotting:
             if ylim_top: ax.set_ylim(0, ylim_top)
             else: ax.autoscale(enable=True, axis='y', tight=False)
 
-        # Parameter Count
-        plot_group_row(0, "Parameter Count (M)", "Parameter Count", "Millions", ylim_top = 12)
-        axes[0].legend(title="Depthwise Seperable Layer Repeats", loc='upper left', fontsize=18, title_fontsize=20, ncol=len(depths))
-
-        # Power
-        plot_group_row(1, "Average Power (mW)", "Average Power", "mW", ylim_top = 1400)
-        
-        # Energy
-        plot_group_row(2, "Energy per Inference (mJ)", "Energy per Inference", "mJ",80)
-
-        # Latency
-        plot_group_row(3, "Measured Inference Time (ms)", "Measured Latency", "ms",90)
-
-        # Accuracy
+        # Plotting rows...
+        plot_group_row(0, "Parameter Count (M)", "Parameter Count", "Millions", ylim_top=13)
+        axes[0].legend(title="Layer Repeats", loc='upper left', fontsize=16, title_fontsize=18, ncol=len(depths))
+        plot_group_row(1, "Average Power (mW)", "Average Power", "mW", ylim_top=1400)
+        plot_group_row(2, "Energy per Inference (mJ)", "Energy per Inference", "mJ", 200)
+        plot_group_row(3, "Measured Inference Time (ms)", "Measured Latency", "ms", 250)
         plot_group_row(4, "Top-1 Accuracy", "Top-1 Accuracy", "%", ylim_top=100)
 
-        # X-Axis
-        axes[3].set_xticks(x)
-        axes[3].set_xticklabels([f"Alpha {a}" for a in alphas], fontsize=22)
-        axes[3].set_xlabel("Width Multiplier (Alpha)", fontsize=24)
+        # FIX: Apply ticks to the LAST axis (axes[4])
+        axes[4].set_xticks(x)
+        axes[4].set_xticklabels([f"Alpha {a}" for a in alphas], fontsize=22)
+        axes[4].set_xlabel("Width Multiplier (Alpha)", fontsize=24)
 
-        plt.tight_layout()
+        # Manual adjustment if constrained_layout isn't enough:
+        # plt.subplots_adjust(hspace=0.4) 
+
         plt.savefig(self.output_dir / filename, dpi=300, bbox_inches="tight")
         print(f"[PLOT] Saved {filename}")
         plt.close()
@@ -530,9 +516,9 @@ class GridStatsPlotting:
         unique_winners = np.unique(best_idx)
         valid_winners = [uid for uid in unique_winners if uid != -1]
         
-        # Generate distinct colors for our models (scalable to 25+)
-        cmap = matplotlib.colormaps["turbo"]
-        model_colors = cmap(np.linspace(0.05, 0.95, len(models)))
+        cmap = matplotlib.colormaps["magma"]
+        # Max out at 0.85 so the brightest magma color doesn't blend with the grey background
+        model_colors = cmap(np.linspace(0.1, 0.85, len(models)))
         
         legend_patches = []
         for uid in valid_winners:
@@ -607,8 +593,9 @@ class GridStatsPlotting:
         Z[Z == -1] = 0.0  
 
         # build the color grid matching the 2d heatmap
-        cmap = plt.get_cmap("turbo")
-        model_colors = cmap(np.linspace(0.05, 0.95, len(models)))
+        cmap = plt.get_cmap("magma")
+        # Max out at 0.85 for contrast against the Unachievable grey mask
+        model_colors = cmap(np.linspace(0.1, 0.85, len(models)))
         
         # default everything to light grey (rgba)
         color_grid = np.full((resolution, resolution, 4), [0.9, 0.9, 0.9, 1.0])
@@ -739,7 +726,7 @@ if __name__ == "__main__":
     if plotter.df is not None and not plotter.df.empty:
 
         # plotter.plot_standard_metrics()
-        # plotter.plot_grouped_metrics()
+        plotter.plot_grouped_metrics()
         # plotter.plot_efficiency_overview()
         # eff, rate = plotter.find_champions()
 
