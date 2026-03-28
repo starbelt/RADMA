@@ -277,15 +277,112 @@ class GridStatsPlotting:
         print(f"[PLOT] Saved {filename}")
         plt.close()
 
+    def plot_grouped_metrics_prod(self, filename="grid_grouped_metrics_prod.pdf", show_values=True):
+        import numpy as np
+        import matplotlib.pyplot as plt
+        
+        # Enforce global serif font layout for native LaTeX integration
+        plt.rcParams.update({
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+            "mathtext.fontset": "stix"
+        })
+
+        if self.df is None or self.df.empty: 
+            return
+
+        alphas = sorted(self.df['Alpha'].unique())
+        depths = sorted(self.df['Depth'].unique())
+        
+        x = np.arange(len(alphas))  
+        
+        # Shrink the whitespace between groups by making the bars wider
+        # 0.9 means the group of bars takes up 90% of the space between ticks
+        group_width = 0.9 
+        width = group_width / len(depths)   
+
+        cmap = plt.get_cmap('magma_r') 
+        colors = cmap(np.linspace(0.2, 0.8, len(depths)))
+
+        # Sized for a single-column paper layout (3.5 to 4 inches wide is standard)
+        fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True, figsize=(3.5, 4.5), gridspec_kw={'hspace': 0.15})
+
+        def plot_group_row(ax_idx, metric_col, title, ylabel, ylim_top=None):
+            ax = axes[ax_idx]
+            for i, depth in enumerate(depths):
+                subset = self.df[self.df['Depth'] == depth]
+                heights = []
+                for alpha in alphas:
+                    val = subset[subset['Alpha'] == alpha][metric_col]
+                    heights.append(val.item() if not val.empty else 0)
+                
+                offset = (i - len(depths)/2) * width + width/2
+                # Only add labels to the top plot for the legend
+                label = f'Depth {depth}' if ax_idx == 0 else ""
+                ax.bar(x + offset, heights, width, label=label, color=colors[i], edgecolor='#333333', linewidth=0.5)
+                
+                if show_values:
+                    for j, h in enumerate(heights):
+                        if h > 0:
+                            # Floored integer values, rotated 90 deg so they fit in the tight horizontal space
+                            ax.text(x[j] + offset, h*1.05, f"{h:.1f}", 
+                                    ha='center', va='bottom', fontsize=5, rotation=90)
+
+            # Paper-ready typography
+            ax.set_ylabel(ylabel, fontsize=11)
+            ax.tick_params(axis="y", labelsize=10)
+            ax.grid(False)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            
+            if ylim_top: 
+                ax.set_ylim(0, ylim_top)
+            else: 
+                # Add headroom for the rotated text if values are shown
+                headroom = 1.35 if show_values else 1.1
+                ax.set_ylim(0, max([h for heights in [self.df[self.df['Depth'] == d][metric_col] for d in depths] for h in heights]) * headroom)
+
+        # Plotting the bottom three rows only
+        plot_group_row(0, "Energy per Inference (mJ)", "", "Energy (mJ)")
+        # Place legend above the first plot, spread across columns
+        axes[0].legend(loc='upper center', bbox_to_anchor=(0.5, 1.25), fontsize=9, ncol=len(depths), frameon=False)
+        
+        plot_group_row(1, "Measured Inference Time (ms)", "", "Latency (ms)")
+        plot_group_row(2, "Top-1 Accuracy", "", "Accuracy (%)", ylim_top=110)
+
+        # X-axis formatting on the bottom axis
+        axes[2].set_xticks(x)
+        axes[2].set_xticklabels([f"{a}" for a in alphas], fontsize=10)
+        axes[2].set_xlabel(r"Width Multiplier ($\alpha$)", fontsize=11)
+
+        # Ensure pdf extension
+        from pathlib import Path
+        pdf_filename = Path(filename).with_suffix('.pdf')
+        
+        plt.tight_layout()
+        plt.savefig(self.output_dir / pdf_filename, format='pdf', bbox_inches="tight")
+        print(f"[PLOT] Saved {pdf_filename}")
+        plt.close(fig)
+
     # Efficiency Overview
-    def plot_efficiency_overview(self):
+    def plot_efficiency_overview(self, filename="grid_efficiency_overview.pdf"):
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from pathlib import Path
+
+        # Enforce global serif font layout for native LaTeX integration
+        plt.rcParams.update({
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+            "mathtext.fontset": "stix"
+        })
+
         if self.df is None or self.df.empty:
             return
 
-        subset = self.df.sort_values("Correct_Inf_per_Joule", ascending=True).copy()
-        names = subset["Model name"].tolist()
-        cmap = plt.get_cmap("viridis")
-        fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(24, 12))
+        # Stacked 2-row layout, crunched vertically to 5.5 inches height
+        fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(3.5, 5.5), gridspec_kw={'hspace': 0.5})
+        cmap = plt.get_cmap("magma_r")
 
         def plot_stack(ax, sort_col, total_col, correct_col, title, unit):
             sorted_df = self.df.sort_values(sort_col, ascending=True)
@@ -294,50 +391,40 @@ class GridStatsPlotting:
             correct = sorted_df[correct_col].to_numpy()
 
             x = np.arange(len(local_names))
-            local_colors = [cmap(i / len(local_names)) for i in range(len(local_names))]
+            
+            # Map colors safely across the number of bars
+            local_colors = [cmap(i / max(1, len(local_names) - 1)) for i in range(len(local_names))]
 
             for i in range(len(x)):
                 c_base = local_colors[i]
-                c_light = lighten_color(c_base, 0.5)
 
-                ax.bar(x[i], correct[i], color=c_base)
-                ax.bar(x[i], total[i] - correct[i], bottom=correct[i], color=c_light)
+                # Bottom Bar: Correct inferences (solid, dark edge)
+                ax.bar(x[i], correct[i], color=c_base, edgecolor='#333333', linewidth=0.8)
+                
+                # Top Bar: Incorrect inferences (transparent alpha creates a lightened effect automatically)
+                ax.bar(x[i], total[i] - correct[i], bottom=correct[i], color=c_base, alpha=0.3, edgecolor='#333333', linewidth=0.8)
 
-                # --- value annotations (1 decimal place) ---
-                ax.text(
-                    x[i],
-                    correct[i] / 2,
-                    f"{correct[i]:.1f}",
-                    ha="center",
-                    va="center",
-                    fontsize=12,
-                    color="white",
-                    fontweight="bold",
-                )
-
-                ax.text(
-                    x[i],
-                    total[i],
-                    f"{total[i]:.1f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=12,
-                    color="black",
-                )
-
-            ax.set_title(title, fontsize=28)
-            ax.set_ylabel(unit, fontsize=24)
-            ax.tick_params(axis="y", labelsize=20)
+            # Paper-ready typography
+            ax.set_title(title, fontsize=12, fontweight='bold', pad=10)
+            ax.set_ylabel(unit, fontsize=11)
+            ax.tick_params(axis="y", labelsize=10)
+            
+            # X-ticks applied to every subplot, downsized font significantly to 8pt
             ax.set_xticks(x)
-            ax.set_xticklabels(local_names, rotation=45, ha="right", fontsize=14)
+            ax.set_xticklabels(local_names, rotation=45, ha="right", fontsize=8)
+            
+            # Clean backdrop
+            ax.grid(False)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
 
         plot_stack(
             axes[0],
             "Correct_Inf_per_Sec",
             "Inf_per_Sec",
             "Correct_Inf_per_Sec",
-            "Throughput",
-            "Inf/s",
+            "Correct Inferences per Second",
+            "Throughput (Inf/s)",
         )
 
         plot_stack(
@@ -345,14 +432,17 @@ class GridStatsPlotting:
             "Correct_Inf_per_Joule",
             "Inf_per_Joule",
             "Correct_Inf_per_Joule",
-            "Efficiency",
-            "Inf/J",
+            "Correct Inferences Per Joule",
+            "Efficiency (Inf/J)",
         )
 
         plt.tight_layout()
-        plt.savefig(self.output_dir / "grid_efficiency_overview.png", dpi=300)
-        plt.close()
-
+        
+        # Ensure PDF export
+        pdf_filename = Path(filename).with_suffix('.pdf')
+        plt.savefig(self.output_dir / pdf_filename, format='pdf', bbox_inches='tight')
+        plt.close(fig)
+        print(f"[PLOT] Saved {pdf_filename}")
     # 3D Surface
 
     def plot_3d_surface(self, specific_models=None, filename="grid_3d_surface.png", title_suffix=""):
@@ -721,12 +811,13 @@ if __name__ == "__main__":
     if plotter.df is not None and not plotter.df.empty:
 
         # plotter.plot_standard_metrics()
-        plotter.plot_grouped_metrics()
-        # plotter.plot_efficiency_overview()
+        #plotter.plot_grouped_metrics()
+        plotter.plot_grouped_metrics_prod()
+        plotter.plot_efficiency_overview()
         # eff, rate = plotter.find_champions()
 
-        plotter.plot_model_selection_heatmap(resolution=500)
-        plotter.plot_3d_accuracy_surface(resolution = 300, interactive=False)
+        #plotter.plot_model_selection_heatmap(resolution=500)
+        #plotter.plot_3d_accuracy_surface(resolution = 300, interactive=False)
 
         # plotter.plot_3d_surface(specific_models=None, filename="grid_3d_all.png", title_suffix="(All Models)")
         # if eff and rate:
