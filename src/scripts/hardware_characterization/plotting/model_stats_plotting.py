@@ -1159,6 +1159,13 @@ def plot_pretrained_from_compiled_json(json_path: pathlib.Path, filename: pathli
     import numpy as np
     import matplotlib.pyplot as plt
     
+    # Update global font settings for native LaTeX paper integration
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"  # Matches standard serif math fonts
+    })
+    
     if not json_path.exists():
         print(f"[ERROR] JSON file not found: {json_path}")
         return
@@ -1220,15 +1227,16 @@ def plot_pretrained_from_compiled_json(json_path: pathlib.Path, filename: pathli
 
     plot_row(0, energy, "Energy Consumption", "Energy (mJ)")
     plot_row(1, latency, "Inference Latency", "Latency (ms)")
-    plot_row(2, accuracy, "Classification Accuracy", "Percent (%)", ylim_top=115) 
+    plot_row(2, accuracy, "Edge TPU Classification Accuracy (Top-1)", "Percent (%)", ylim_top=115) 
 
     axes[2].set_xticks(x_pos)
     # Increased x-tick font size and aligned them perfectly with the tick marks
     axes[2].set_xticklabels(names, rotation=45, ha="right", rotation_mode="anchor", fontsize=12)
 
     plt.tight_layout()
-    plt.savefig(filename, dpi=300, bbox_inches="tight")
-    print(f"[PLOT] Saved Pre-Trained summary plot to {filename}")
+    pdf_filename = filename.with_suffix('.pdf')
+    plt.savefig(pdf_filename, format='pdf', bbox_inches="tight")
+    print(f"[PLOT] Saved Pre-Trained summary plot to {pdf_filename}")
     plt.close(fig)
 
 def plot_pretrained_correct_metrics_from_json(json_path: pathlib.Path, filename: pathlib.Path):
@@ -1240,6 +1248,13 @@ def plot_pretrained_correct_metrics_from_json(json_path: pathlib.Path, filename:
     import json
     import numpy as np
     import matplotlib.pyplot as plt
+    
+    # Update global font settings for native LaTeX paper integration
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
     
     if not json_path.exists():
         print(f"[ERROR] JSON file not found: {json_path}")
@@ -1306,16 +1321,18 @@ def plot_pretrained_correct_metrics_from_json(json_path: pathlib.Path, filename:
             )
 
     # Simplified titles and updated to standard scientific abbreviations
-    plot_row(0, correct_inf_sec, "Correct Throughput", "Inf/s")
-    plot_row(1, correct_inf_joule, "Correct Energy Efficiency", "Inf/J")
+    plot_row(0, correct_inf_sec, "Average Correct Inferences per Second", "Inferences/sec")
+    plot_row(1, correct_inf_joule, "Average Correct Inferences per Joule", "Inferences/J")
 
     axes[1].set_xticks(x_pos)
     # Increased x-tick font size and aligned them perfectly
     axes[1].set_xticklabels(names, rotation=45, ha="right", rotation_mode="anchor", fontsize=12)
 
     plt.tight_layout()
-    plt.savefig(filename, dpi=300, bbox_inches="tight")
-    print(f"[PLOT] Saved Pre-Trained correct metrics plot to {filename}")
+    
+    pdf_filename = filename.with_suffix('.pdf')
+    plt.savefig(pdf_filename, format='pdf', bbox_inches="tight")
+    print(f"[PLOT] Saved Pre-Trained correct metrics plot to {pdf_filename}")
     plt.close(fig)
 
 

@@ -80,6 +80,15 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
                 plot_efficiency_baseline=False, 
                 plot_throughput_baseline=False,
                 plot_true_naive_baseline=False):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
+    
     set_plot_style()
     t_plot = np.array(logs['time_rel'])
     
@@ -121,7 +130,12 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
         handles_yield.append(line)
         labels_yield.append('Yield (High Eff)')
 
-    ax1.grid(True, alpha=0.3)
+    # Styling updates
+    ax1.set_ylabel("Yield ($10^5$ infs)", fontsize=12)
+    ax1.tick_params(axis='y', labelsize=10)
+    ax1.grid(False)
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
 
     handles_batt, labels_batt = _plot_segmented_line(ax2, t_plot, logs['battery_wh'], logs['model_name'], color_dict, ylabel="Battery (Wh)")
     
@@ -148,8 +162,13 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     fill_sun = ax2.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax2.get_xaxis_transform(), 
                     color='gold', alpha=0.15, label='Sunlight')
     
-    ax2.set_xlabel('Mission Time (s)')
-    ax2.grid(True, alpha=0.3)
+    # Styling updates
+    ax2.set_xlabel('Mission Time (s)', fontsize=12)
+    ax2.set_ylabel('Battery (Wh)', fontsize=12)
+    ax2.tick_params(axis='both', labelsize=10)
+    ax2.grid(False)
+    ax2.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
     
 
     unique_labels = []
@@ -158,13 +177,11 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     all_raw_handles = handles_yield + [line_lock, line_resume, fill_sun]
     all_raw_labels = labels_yield + ['Lock Limit', 'Resume Limit', 'Sunlight']
     
-    # Deduplicate
     for h, l in zip(all_raw_handles, all_raw_labels):
         if l not in unique_labels:
             unique_labels.append(l)
             unique_handles.append(h)
 
-    # Categorize into logical groups
     system_names = ['Lock Limit', 'Resume Limit', 'Sunlight']
     sys_group = []
     model_group = []
@@ -178,25 +195,25 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
         else:
             model_group.append((h, l))
             
-    # Sort each group
-    sys_group.sort(key=lambda x: system_names.index(x[1])) # Preserve defined exact order
-    model_group.sort(key=lambda x: x[1])                   # Alphabetical (groups alpha, then depth natively)
-    baseline_group.sort(key=lambda x: x[1])                # Alphabetical 
+    sys_group.sort(key=lambda x: system_names.index(x[1])) 
+    model_group.sort(key=lambda x: x[1])                   
+    baseline_group.sort(key=lambda x: x[1])                
     
-    # Recombine (System Limits -> Dynamic Models -> Baselines)
     sorted_legend = sys_group + model_group + baseline_group
     
     final_handles = [x[0] for x in sorted_legend]
     final_labels = [x[1] for x in sorted_legend]
 
+    # Bumped legend fontsize from 6 to 9
     ax2.legend(final_handles, final_labels, loc='upper center', bbox_to_anchor=(0.5, -0.25), 
-            ncol=3, frameon=False, fontsize=6)
+            ncol=3, frameon=False, fontsize=9)
             
     plt.tight_layout()
     plt.subplots_adjust(top=0.90) 
     
-    save_path = output_dir / f"{case_name}_STATIC.png"
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    # Save as PDF
+    save_path = output_dir / f"{case_name}_STATIC.pdf"
+    plt.savefig(save_path, format='pdf', bbox_inches='tight')
     plt.close()
 
 def plot_orbit_dynamics(logs, case_name, output_dir):
@@ -312,6 +329,16 @@ def plot_single(logs, case_name, output_dir):
     Plots exactly one orbit of altitude and ground speed, 
     sliced to start and end exactly between apogee and perigee.
     """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    
+    # Force paper-quality serif fonts globally
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
+    
     set_plot_style()
 
     # --- Hokie colors ---
@@ -346,17 +373,20 @@ def plot_single(logs, case_name, output_dir):
     fig, ax1 = plt.subplots(figsize=(3.5, 2.4))
     
     # Plot Altitude on the left axis
-    ax1.set_xlabel('Time (s)')
-    ax1.set_ylabel('Orbital Altitude (km)', color=COLOR_ORBIT)
+    ax1.set_xlabel('Time (s)', fontsize=12)
+    ax1.set_ylabel('Orbital Altitude (km)', color=COLOR_ORBIT, fontsize=12)
     line1, = ax1.plot(t_slice_norm, alt_slice, color=COLOR_ORBIT, linewidth=1.5, label='Altitude')
+    ax1.tick_params(axis='both', labelsize=10)
     ax1.tick_params(axis='y', labelcolor=COLOR_ORBIT)
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(False) # Removed grid for pure white background
+    ax1.spines['top'].set_visible(False)
     
     # Plot Speed on the right axis
     ax2 = ax1.twinx()  
-    ax2.set_ylabel('Ground Track Speed (km/s)', color=COLOR_SPEED)  
+    ax2.set_ylabel('Ground Track Speed (km/s)', color=COLOR_SPEED, fontsize=12)  
     line2, = ax2.plot(t_slice_norm, speed_slice, color=COLOR_SPEED, linewidth=1.5, linestyle='--', label='Ground Speed')
-    ax2.tick_params(axis='y', labelcolor=COLOR_SPEED)
+    ax2.tick_params(axis='y', labelsize=10, labelcolor=COLOR_SPEED)
+    ax2.spines['top'].set_visible(False)
     
     alt_span = np.max(alt_slice) - np.min(alt_slice)
     ax1.set_ylim(np.min(alt_slice) - (0.1 * alt_span), np.max(alt_slice) + (0.1 * alt_span))
@@ -366,18 +396,29 @@ def plot_single(logs, case_name, output_dir):
     
     lines = [line1, line2]
     labels = [l.get_label() for l in lines]
-    ax1.legend(lines, labels, loc='upper center', bbox_to_anchor=(0.5, 1.18), ncol=2, frameon=False)
+    ax1.legend(lines, labels, loc='upper center', bbox_to_anchor=(0.5, 1.25), ncol=2, frameon=False, fontsize=10)
     
     plt.tight_layout()
-    save_path = output_dir / f"{case_name}_orbit_motivation.png"
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    # Save as PDF
+    save_path = output_dir / f"{case_name}_orbit_motivation.pdf"
+    plt.savefig(save_path, format='pdf', bbox_inches='tight')
     plt.close()
 
 def plot_static_failure_motivation(logs, naive_states, case_name, cfg, output_dir):
     """
     Isolates and plots the failure mode of a static, high-accuracy model deployment 
-    during power constraints. Uses Hokie colors.
+    during power constraints. Uses Hokie colors. Formatted for paper layout.
     """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    
+    # Enforce global serif font layout for native LaTeX integration
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
+    
     set_plot_style()
     
     if 'High_Accuracy' not in naive_states:
@@ -396,36 +437,59 @@ def plot_static_failure_motivation(logs, naive_states, case_name, cfg, output_di
     COLOR_YIELD = '#E5751F'  # Hokie orange
     COLOR_LINES = '#75787b'  # neutral gray
     
-    # --- Top Pane: Battery & Thresholds ---
-    ax1.plot(t_plot, battery, color=COLOR_BATT, linewidth=1.5, label='Battery (Static)')
+    # --- Top Pane: Cumulative Yield ---
+    ax1.plot(t_plot, yield_arr, color=COLOR_YIELD, linewidth=1.5, label='Cumulative Yield')
+    
+    # Styling updates for top pane
+    ax1.set_ylabel('Total Inferences', fontsize=12)
+    ax1.tick_params(axis='both', labelsize=10)
+    
+    # Force scientific notation on the y-axis
+    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+    # Ensure the '1e5' multiplier matches the tick font size
+    ax1.yaxis.get_offset_text().set_fontsize(10)
+    
+    ax1.grid(False) # Removed grid
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    # Legend directly on the subplot
+    ax1.legend(loc='upper left', frameon=True, fontsize=10) 
+    
+    # --- Bottom Pane: Battery & Thresholds ---
+    ax2.plot(t_plot, battery, color=COLOR_BATT, linewidth=1.5, label='Battery (Static)')
     
     lock_limit = cfg['battery_capacity_wh'] * cfg['compute_disable_pct']
     resume_limit = cfg['battery_capacity_wh'] * cfg['compute_enable_pct']
     
-    ax1.axhline(lock_limit, color='#51c29b', linestyle=':', linewidth=1.0, label='Lockout Threshold')
-    ax1.axhline(resume_limit, color='#cd1d5b', linestyle='--', linewidth=1.0, label='Resume Threshold')
+    ax2.axhline(lock_limit, color='#51c29b', linestyle=':', linewidth=1.0, label='Lockout Threshold')
+    ax2.axhline(resume_limit, color='#cd1d5b', linestyle='--', linewidth=1.0, label='Resume Threshold')
     
     failure_idx = np.where(battery < lock_limit)[0]
     if len(failure_idx) > 0:
-        ax1.axvline(x=15000, color=COLOR_LINES, linestyle='-.', linewidth=1.0, label='Power Degradation')
-        ax2.axvline(x=15000, color=COLOR_LINES, linestyle='-.', linewidth=1.0)
+        # Plotted on both panes for visual continuity, but NO labels so they don't enter the legends
+        ax1.axvline(x=10000, color=COLOR_LINES, linestyle='-.', linewidth=1.0)
+        ax2.axvline(x=10000, color=COLOR_LINES, linestyle='-.', linewidth=1.0)
     
-    ax1.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax1.get_xaxis_transform(), 
+    ax2.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax2.get_xaxis_transform(), 
                     color='gold', alpha=0.15, label='Sunlight')
     
-    ax1.set_ylabel('Battery (Wh)')
-    ax1.legend(loc='upper right', frameon=True, framealpha=0.9)
-    ax1.grid(True, alpha=0.3)
+    # Styling updates for bottom pane
+    ax2.set_ylabel('Battery (Wh)', fontsize=12)
+    ax2.set_xlabel('Mission Time (s)', fontsize=12)
+    ax2.tick_params(axis='both', labelsize=10)
+    ax2.grid(False) # Removed grid
+    ax2.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
     
-    # --- Bottom Pane: Cumulative Yield ---
-    ax2.plot(t_plot, yield_arr, color=COLOR_YIELD, linewidth=1.5, label='Cumulative Yield')
+    # Battery Legend underneath the bottom pane (2 columns fits 4 items perfectly)
+    ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.25), 
+            ncol=2, frameon=False, fontsize=10)
     
-    ax2.set_ylabel('Total Inferences')
-    ax2.set_xlabel('Mission Time (s)')
-    ax2.legend(loc='lower right', frameon=True, framealpha=0.9)
-    ax2.grid(True, alpha=0.3)
-    
+    # Use tight_layout and add extra room at the bottom so the external legend isn't clipped
     plt.tight_layout()
-    save_path = output_dir / f"{case_name}_static_failure_motivation.png"
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.subplots_adjust(bottom=0.25) 
+    
+    # Save as PDF for vector graphics
+    save_path = output_dir / f"{case_name}_static_failure_motivation.pdf"
+    plt.savefig(save_path, format='pdf', bbox_inches='tight')
     plt.close()

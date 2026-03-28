@@ -26,7 +26,7 @@ if __name__ == "__main__":
     orbit_path = ROOT_DIR / "data/stk"
     out_dir = ROOT_DIR / "results/case_studies/sso"
 
-    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=10)
+    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=6)
     sso_cfg = ContinuousSatSim.get_sso_config()
 
     sim_sso.run_case_study("SSO_01_Baseline", config_overrides=sso_cfg, events=None)
@@ -39,9 +39,9 @@ if __name__ == "__main__":
     # sim_sso.run_case_study("SSO_03_Degraded_Arrays", config_overrides=sso_cfg, events=degraded_events)
 
     degraded_cfg = sso_cfg.copy()
-    degraded_cfg['solar_generation_mw'] = 2000.0 
+    degraded_cfg['solar_generation_mw'] = 1300 
     solar_failure_events = [
-        {'start': 26500, 'duration': 50000, 'solar_scale': 0.5} 
+        {'start': 10000, 'duration': 50000, 'solar_scale': 0.65} 
     ]
     
-    sim_sso.run_case_study("eLEO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)
+    sim_sso.run_case_study("SSO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)

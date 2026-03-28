@@ -556,15 +556,25 @@ class GridStatsPlotting:
         print(f"[PLOT] Saved {filename}")
         plt.close()
 
-    def plot_3d_accuracy_surface(self, resolution=100, filename="grid_3d_accuracy_surface.png", interactive=False):
-        # TODO: 4 side videw of cube + sliced version
+    def plot_3d_accuracy_surface(self, resolution=100, filename="grid_3d_accuracy_surface.pdf", interactive=False):
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Patch
+        from pathlib import Path
+        
+        # Enforce global serif font layout
+        plt.rcParams.update({
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+            "mathtext.fontset": "stix"
+        })
+
         if self.df is None or self.df.empty:
             print("[warn] no data available for 3d plot.")
             return
 
         print(f"\n[plot] generating 3d accuracy surface (resolution: {resolution}x{resolution})...")
 
-        # define the grid space
         max_inf_sec = self.df["Inf_per_Sec"].max() * 1.05
         max_inf_joule = self.df["Inf_per_Joule"].max() * 1.05
         
@@ -572,32 +582,24 @@ class GridStatsPlotting:
         req_inf_joule = np.linspace(0, max_inf_joule, resolution)
         X, Y = np.meshgrid(req_inf_sec, req_inf_joule)
 
-        # extract arrays
         models = self.df["Model name"].values
         inf_sec = self.df["Inf_per_Sec"].values
         inf_joule = self.df["Inf_per_Joule"].values
         accuracies = self.df["Top-1 Accuracy"].values 
 
-        # boolean mask for valid constraints
         valid_mask = (inf_sec[:, None, None] >= X) & (inf_joule[:, None, None] >= Y)
 
-        # broadcast accuracies and find the winner
         scores = np.full_like(valid_mask, -1.0, dtype=float)
         scores[valid_mask] = np.broadcast_to(accuracies[:, None, None], valid_mask.shape)[valid_mask]
 
         Z = np.max(scores, axis=0)
         best_idx = np.argmax(scores, axis=0)
 
-        # mask unachievable space
         best_idx[Z == -1] = -1
         Z[Z == -1] = 0.0  
 
-        # build the color grid matching the 2d heatmap
         cmap = plt.get_cmap("magma")
-        # Max out at 0.85 for contrast against the Unachievable grey mask
         model_colors = cmap(np.linspace(0.1, 0.85, len(models)))
-        
-        # default everything to light grey (rgba)
         color_grid = np.full((resolution, resolution, 4), [0.9, 0.9, 0.9, 1.0])
         
         unique_winners = np.unique(best_idx)
@@ -610,37 +612,36 @@ class GridStatsPlotting:
             
         legend_patches.append(Patch(color=(0.9, 0.9, 0.9), label='Unachievable'))
 
-        # pad the geometry for solid volume walls
         X_pad = np.pad(X, pad_width=1, mode='edge')
         Y_pad = np.pad(Y, pad_width=1, mode='edge')
         Z_pad = np.pad(Z, pad_width=1, mode='constant', constant_values=0.0)
-        
-        # pad the colors using 'edge' so the model colors drag down the cliff faces
         color_grid_pad = np.pad(color_grid, ((1, 1), (1, 1), (0, 0)), mode='edge')
 
         def render_subplot(ax, elev, azim, hide_axis=None):
             ax.plot_surface(
                 X_pad, Y_pad, Z_pad, 
                 facecolors=color_grid_pad,
-                edgecolor='black',
-                linewidth=0.3,
+                edgecolor='#333333', # Clean dark edge for vector output
+                linewidth=0.2,
                 antialiased=True,
                 rcount=45,
                 ccount=45
             )
 
-
-            # Push the back-panes out by 10% so the data doesn't swallow the axis lines
             ax.set_xlim(-8, max_inf_sec)
             ax.set_ylim(-8, max_inf_joule)
             ax.set_zlim(0, 100) 
             
-            # Subplot titles moved closer
-            ax.set_xlabel("Required Inferences / Sec" if hide_axis != 'x' else "", fontsize=12, labelpad=5)
-            ax.set_ylabel("Required Inferences / Joule" if hide_axis != 'y' else "", fontsize=12, labelpad=5)
-            ax.set_zlabel("Top-1 Acc (%)" if hide_axis != 'z' else "", fontsize=12, labelpad=5)
+            ax.set_xlabel("Required Inferences / Sec" if hide_axis != 'x' else "", fontsize=12, labelpad=8)
+            ax.set_ylabel("Required Inferences / Joule" if hide_axis != 'y' else "", fontsize=12, labelpad=8)
+            ax.set_zlabel("Top-1 Acc (%)" if hide_axis != 'z' else "", fontsize=12, labelpad=8)
             
-            # Completely remove the ticks for the hidden axis to avoid the thick black overlapping line
+            # Remove 3D grid and make pane backgrounds completely transparent 
+            ax.grid(False)
+            ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+            ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+            ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+            
             if hide_axis == 'x':
                 ax.set_xticks([])
             elif hide_axis == 'y':
@@ -648,26 +649,22 @@ class GridStatsPlotting:
             elif hide_axis == 'z':
                 ax.set_zticks([])
             
-            ax.tick_params(axis='both', which='major', labelsize=9, pad=0)
+            ax.tick_params(axis='both', which='major', labelsize=10, pad=0)
             
-            # set camera angle
             ax.view_init(elev=elev, azim=azim) 
 
-            # ZOOM HACK: Force the 3D plot to fill more of its invisible bounding box
             try:
-                ax.set_box_aspect(None, zoom=1.2) # For modern matplotlib versions
+                ax.set_box_aspect(None, zoom=1.2)
             except AttributeError:
-                ax.dist = 7 # Fallback for older matplotlib versions (default is 10)
-            ax.margins(0) # Strip extra margins
+                ax.dist = 7
+            ax.margins(0) 
 
         if interactive:
-            # Single large interactive plot
             fig = plt.figure(figsize=(12, 10))
             ax = fig.add_subplot(111, projection='3d')
             render_subplot(ax, elev=35, azim=230)
-            ax.set_title("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=20, pad=15)
+            ax.set_title("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=18, pad=15)
             
-            # Shared bottom legend for interactive view
             fig.legend(
                 handles=legend_patches, loc='lower center', 
                 ncol=min(len(legend_patches), 6), bbox_to_anchor=(0.5, 0.02),
@@ -680,35 +677,33 @@ class GridStatsPlotting:
             
         else:
             fig = plt.figure(figsize=(20.5, 6)) 
-            fig.suptitle("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=22, y=1.05)
+            fig.suptitle("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=20, fontweight='bold', y=1.05)
 
-            # top 
             ax1 = fig.add_subplot(141, projection='3d')
             render_subplot(ax1, elev=90, azim=-90, hide_axis='z')
 
             ax2 = fig.add_subplot(142, projection='3d')
             render_subplot(ax2, elev=0, azim=180, hide_axis='x')
 
-
             ax3 = fig.add_subplot(143, projection='3d')
             render_subplot(ax3, elev=0, azim=-90, hide_axis='y')
 
-            # iso view -> hide nothing
             ax4 = fig.add_subplot(144, projection='3d')
             render_subplot(ax4, elev=35, azim=230)
 
             plt.subplots_adjust(wspace=-0.25, bottom=0.25, top=0.9, left=0.0, right=1.0)
             
-            # Shared bottom legend
             fig.legend(
                 handles=legend_patches, loc='lower center', 
                 ncol=min(len(legend_patches), 8), bbox_to_anchor=(0.5, -0.05),
                 title="Selected Model", title_fontsize=14, fontsize=12
             )
             
-            save_path = self.output_dir / filename
-            plt.savefig(save_path, dpi=300, bbox_inches="tight", pad_inches=0.2)
-            print(f"[plot] saved {filename}")
+            # Ensures filename passed has .pdf
+            safe_filename = Path(filename).with_suffix('.pdf')
+            save_path = self.output_dir / safe_filename
+            plt.savefig(save_path, format='pdf', bbox_inches="tight", pad_inches=0.2)
+            print(f"[plot] saved {safe_filename}")
             
         plt.close()
 
