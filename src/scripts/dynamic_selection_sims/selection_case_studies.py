@@ -5,7 +5,7 @@ import sys
 import os
 
 from stk_utils import load_orbit_data, interpolate_orbit
-from plotting_utils import plot_orbit_dynamics, plot_mission, plot_single ,plot_naive_blitz, plot_horizon_sweep,plot_static_failure_motivation
+from plotting_utils import *
 
 current_file = Path(__file__).resolve()
 project_root = None
@@ -177,24 +177,27 @@ class ContinuousSatSim:
         drops = {'power': 0.0, 'time': 0.0, 'energy': 0.0}
 
         if infs_for_sec <= 0:
-            return "blind", 0.0, 0.0, 0.0, drops
+            return "blind", 0.0, 0.0, 0.0, drops, 0.0
 
         if cpu_blocked:
             drops['power'] += infs_for_sec
-            return "blocked", 0.0, 0.0, 0.0, drops
+            return "blocked", 0.0, 0.0, 0.0, drops, 0.0
 
         if dynamic_recharging or step_budget_j <= 1e-6:
             drops['power'] += infs_for_sec
-            return "recharge", 0.0, 0.0, 0.0, drops
+            return "recharge", 0.0, 0.0, 0.0, drops, 0.0
 
         model, reason = self._select_model(viable_models, step_budget_j, dt, infs_for_sec)
         
         if model is None:
             drops['power'] += infs_for_sec
-            return "recharge", 0.0, 0.0, 0.0, drops
+            return "recharge", 0.0, 0.0, 0.0, drops, 0.0
 
         active_model = model['Model name']
         current_acc = model['acc_decimal']
+        
+
+        active_ips = 1.0 / model['lat_s']
         
         max_t_infs = dt / model['lat_s']
         max_e_infs = step_budget_j / model['eng_j']
@@ -209,7 +212,8 @@ class ContinuousSatSim:
                 drops['energy'] += dropped
                 
         proc_energy_j = processed_infs * model['eng_j']
-        return active_model, current_acc, processed_infs, proc_energy_j, drops
+
+        return active_model, current_acc, processed_infs, proc_energy_j, drops, active_ips
     
     ## Continuous Time Naive Comparison
 
@@ -346,7 +350,8 @@ class ContinuousSatSim:
         logs = {
             'time_rel': [], 'battery_wh': [], 'throughput_infs': [], 'backlog_infs': [], 'model_name': [],
             'avg_accuracy': [], 'active_power_w': [], 'is_lit': [], 
-            'demand_infs': [], 'alt_km': [], 'speed_km_s': [], 'cum_correct': [], 'dwell_time_s': []
+            'demand_infs': [], 'alt_km': [], 'speed_km_s': [], 'cum_correct': [], 'dwell_time_s': [],
+            'active_ips': [] 
         }
         
         t_start = sim_data['Time (EpSec)'].iloc[0]
@@ -369,7 +374,7 @@ class ContinuousSatSim:
                 dynamic_recharging = False
 
             # run dynamic step
-            active_model, acc, processed, proc_energy_j, drops = self._process_dynamic_step(
+            active_model, acc, processed, proc_energy_j, drops, active_ips = self._process_dynamic_step(
                 viable_models, infs_for_sec, step_budget_j, dt, cpu_blocked, dynamic_recharging
             )
 
@@ -403,11 +408,17 @@ class ContinuousSatSim:
             logs['speed_km_s'].append(row['v_ground_km_s'])
             logs['dwell_time_s'].append(row['dwell_time_s'])
             logs['cum_correct'].append(total_infs_correct)
+            logs['active_ips'].append(active_ips)
 
         self._print_verbose_report(case_name, report_stats, logs, sim_data, cfg, naive_states)
         
         plot_orbit_dynamics(logs, case_name, self.output_dir)
-        plot_mission(logs, naive_states, case_name, cfg, self.output_dir,
+        plot_inference_margin(logs, naive_states, case_name, self.output_dir,
+                            plot_accuracy_baseline=True, 
+                            plot_efficiency_baseline=True, 
+                            plot_throughput_baseline=True,
+                            plot_true_naive_baseline= False)
+        plot_energy(logs, naive_states, case_name, cfg, self.output_dir,
                     plot_accuracy_baseline=True, 
                     plot_efficiency_baseline=True, 
                     plot_throughput_baseline=True,

@@ -75,6 +75,251 @@ def _plot_segmented_line(ax, t, y, categories, color_dict, ylabel="cumulative yi
     
     return handles, labels
 
+def plot_energy(logs, naive_states, case_name, cfg, output_dir, 
+                plot_accuracy_baseline=False, 
+                plot_efficiency_baseline=False, 
+                plot_throughput_baseline=False,
+                plot_true_naive_baseline=False):
+    """
+    Plots a single-pane energy management trace for a mission, comparing 
+    dynamic model swapping against static baselines. Formatted for single-column.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+    
+    # Enforce global serif font layout for native LaTeX integration
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
+    
+    set_plot_style()
+    t_plot = np.array(logs['time_rel'])
+    
+    # Single, condensed subplot for a column-width layout
+    fig, ax = plt.subplots(figsize=(3.5, 4.5)) 
+
+    baseline_colors = {
+        'True_Naive': 'tab:gray',
+        'High_Accuracy': 'tab:blue', 
+        'High_Throughput': 'tab:red', 
+        'High_Efficiency': 'tab:purple'
+    }
+    
+    color_dict = _get_model_colors(logs['model_name'])
+    
+    # dynamic
+    handles_batt, labels_batt = _plot_segmented_line(ax, t_plot, logs['battery_wh'], logs['model_name'], color_dict, ylabel="Battery (Wh)")
+    
+    # baselines
+    if plot_true_naive_baseline and 'True_Naive' in naive_states:
+        line, = ax.plot(t_plot, naive_states['True_Naive']['logs_battery_wh'], 
+                color=baseline_colors['True_Naive'],  alpha=0.5, linewidth=1.5, label='Batt (True Naive)')
+        handles_batt.append(line)
+        labels_batt.append('Batt (True Naive)')
+                
+    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
+        line, = ax.plot(t_plot, naive_states['High_Accuracy']['logs_battery_wh'], 
+                color=baseline_colors['High_Accuracy'],  alpha=0.5, linewidth=1.5, label='Batt (High Acc)')
+        handles_batt.append(line)
+        labels_batt.append('Batt (High Acc)')
+        
+    if plot_throughput_baseline and 'High_Throughput' in naive_states:
+        line, = ax.plot(t_plot, naive_states['High_Throughput']['logs_battery_wh'], 
+                color=baseline_colors['High_Throughput'], alpha=0.5, linewidth=1.5, label='Batt (High Thr)')
+        handles_batt.append(line)
+        labels_batt.append('Batt (High Thr)')
+        
+    if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
+        line, = ax.plot(t_plot, naive_states['High_Efficiency']['logs_battery_wh'], 
+                color=baseline_colors['High_Efficiency'], alpha=0.5, linewidth=1.5, label='Batt (High Eff)')
+        handles_batt.append(line)
+        labels_batt.append('Batt (High Eff)')
+
+    # System Thresholds
+    line_lock = ax.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', linewidth=1.0, label='Lock Limit')
+    line_resume = ax.axhline(cfg['battery_capacity_wh']*cfg['compute_enable_pct'], color='tab:green', linestyle=':', linewidth=1.0, label='Resume Limit')
+    
+    # Sunlight Fill
+    lit = np.array(logs['is_lit'])
+    fill_sun = ax.fill_between(t_plot, 0, 1, where=(lit > 0.5), transform=ax.get_xaxis_transform(), 
+                    color='gold', alpha=0.15, label='Sunlight')
+    
+    # Paper-ready styling updates
+    ax.set_xlabel('Mission Time (s)', fontsize=12)
+    ax.set_ylabel('Battery (Wh)', fontsize=12)
+    ax.tick_params(axis='both', labelsize=10)
+    ax.grid(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    unique_labels = []
+    unique_handles = []
+    
+    all_raw_handles = handles_batt + [line_lock, line_resume, fill_sun]
+    all_raw_labels = labels_batt + ['Lock Limit', 'Resume Limit', 'Sunlight']
+    
+    for h, l in zip(all_raw_handles, all_raw_labels):
+        if l not in unique_labels:
+            unique_labels.append(l)
+            unique_handles.append(h)
+
+    system_names = ['Lock Limit', 'Resume Limit', 'Sunlight']
+    sys_group = []
+    model_group = []
+    baseline_group = []
+    
+    # Categorize handles for grouped legend display
+    for h, l in zip(unique_handles, unique_labels):
+        if l in system_names:
+            sys_group.append((h, l))
+        elif l.startswith('Batt ('):
+            baseline_group.append((h, l))
+        else:
+            model_group.append((h, l))
+            
+    sys_group.sort(key=lambda x: system_names.index(x[1])) 
+    model_group.sort(key=lambda x: x[1])                   
+    baseline_group.sort(key=lambda x: x[1])                
+    
+
+    sys_handles = [x[0] for x in sys_group]
+    sys_labels = [x[1] for x in sys_group]
+    
+    sys_legend = ax.legend(sys_handles, sys_labels, loc='upper left', 
+                           frameon=True, framealpha=0.9, edgecolor='none', fontsize=8)
+    ax.add_artist(sys_legend) # Prevents the second legend from overwriting this one
+    
+    bottom_items = model_group + baseline_group
+    bottom_handles = [x[0] for x in bottom_items]
+    bottom_labels = [x[1] for x in bottom_items]
+    
+    ax.legend(bottom_handles, bottom_labels, loc='upper center', bbox_to_anchor=(0.5, -0.22), 
+            ncol=2, frameon=False, fontsize=8) # Changed ncol=3 to 2 to narrow the footprint
+            
+    plt.subplots_adjust(bottom=0.45) 
+
+    save_path = Path(output_dir) / f"{case_name}_STATIC.pdf"
+    plt.savefig(save_path, format='pdf', bbox_inches='tight')
+    plt.close()
+
+def plot_inference_margin(logs, naive_states, case_name, output_dir, 
+                        plot_accuracy_baseline=False, 
+                        plot_efficiency_baseline=False, 
+                        plot_throughput_baseline=False,
+                        plot_true_naive_baseline=False):
+    """
+    Plots the Inference Throughput Margin (Surplus vs Deficit) against 
+    the dynamic requirements of the orbit, color-coded by active model.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+
+    # Enforce global serif font layout for native LaTeX integration
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
+
+    set_plot_style()
+    t_plot = np.array(logs['time_rel'])
+    demand = np.array(logs['demand_infs'])
+
+    # Standard single-column sizing
+    fig, ax = plt.subplots(figsize=(3.5, 3.0))
+
+    baseline_colors = {
+        'True_Naive': 'tab:gray',
+        'High_Accuracy': 'tab:blue',
+        'High_Throughput': 'tab:red',
+        'High_Efficiency': 'tab:purple'
+    }
+
+    handles_base = []
+    labels_base = []
+
+    # --- Static Baselines (Togglable) ---
+    if plot_true_naive_baseline and 'True_Naive' in naive_states:
+        margin = naive_states['True_Naive']['ips'] - demand
+        line, = ax.plot(t_plot, margin, color=baseline_colors['True_Naive'],
+                alpha=0.8, linewidth=1.0, label='True Naive')
+        handles_base.append(line)
+        labels_base.append('True Naive')
+
+    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
+        margin = naive_states['High_Accuracy']['ips'] - demand
+        line, = ax.plot(t_plot, margin, color=baseline_colors['High_Accuracy'],
+                alpha=0.8, linewidth=1.0, label='High Accuracy')
+        handles_base.append(line)
+        labels_base.append('High Accuracy')
+        
+    if plot_throughput_baseline and 'High_Throughput' in naive_states:
+        margin = naive_states['High_Throughput']['ips'] - demand
+        line, = ax.plot(t_plot, margin, color=baseline_colors['High_Throughput'],
+                alpha=0.8, linewidth=1.0, label='High Throughput')
+        handles_base.append(line)
+        labels_base.append('High Throughput')
+        
+    if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
+        margin = naive_states['High_Efficiency']['ips'] - demand
+        line, = ax.plot(t_plot, margin, color=baseline_colors['High_Efficiency'],
+                alpha=0.8, linewidth=1.0, label='High Efficiency')
+        handles_base.append(line)
+        labels_base.append('High Efficiency')
+
+    # --- Dynamic System (RADMA) ---
+    active_ips = np.array(logs['active_ips'])
+    dynamic_margin = active_ips - demand
+    
+    # Generate the color mapping and plot the segmented dynamic line
+    color_dict = _get_model_colors(logs['model_name'])
+    handles_dyn, labels_dyn = _plot_segmented_line(
+        ax, t_plot, dynamic_margin, logs['model_name'], color_dict, ylabel='Inference Margin (Inf/s)'
+    )
+
+    # Zero Line (Requirement exactly met)
+    line_zero = ax.axhline(0, color='black', linestyle=':', linewidth=1.0, alpha=0.5, label='Demand Met (0 Margin)')
+
+    # Highlighting
+    fill_surplus = ax.fill_between(t_plot, 0, dynamic_margin, where=(dynamic_margin > 0),
+                    color='tab:green', alpha=0.15, label='Surplus Capacity')
+    fill_deficit = ax.fill_between(t_plot, 0, dynamic_margin, where=(dynamic_margin < 0),
+                    color='tab:red', alpha=0.15, label='Processing Deficit')
+
+    # Formatting overrides
+    ax.set_ylabel('Throughput Margin (inf/s)', fontsize=10)
+    ax.set_xlabel('Mission Time (s)', fontsize=10)
+    ax.tick_params(axis='both', labelsize=8)
+
+    ax.grid(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    all_raw_handles = handles_dyn + handles_base + [line_zero, fill_surplus, fill_deficit]
+    all_raw_labels = labels_dyn + labels_base + ['Demand Met (0 Margin)', 'Surplus Capacity', 'Processing Deficit']
+    
+    unique_labels = []
+    unique_handles = []
+    
+    # Deduplicate legend items
+    for h, l in zip(all_raw_handles, all_raw_labels):
+        if l not in unique_labels:
+            unique_labels.append(l)
+            unique_handles.append(h)
+
+    ax.legend(unique_handles, unique_labels, loc='upper center',
+              bbox_to_anchor=(0.5, -0.25), ncol=2, frameon=False, fontsize=8)
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.35) # Make room for the legend underneath
+
+    save_path = Path(output_dir) / f"{case_name}_throughput_margin.pdf"
+    plt.savefig(save_path, format='pdf', bbox_inches='tight')
+    plt.close()
 def plot_mission(logs, naive_states, case_name, cfg, output_dir, 
                 plot_accuracy_baseline=False, 
                 plot_efficiency_baseline=False, 

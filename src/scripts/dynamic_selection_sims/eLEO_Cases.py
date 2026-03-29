@@ -40,9 +40,9 @@ if __name__ == "__main__":
     eleo_cfg.update({
         # optics and inference
         'focal_length_mm': 85.0,
-        'pixel_pitch_um': 1.55,       
-        'sensor_res': 2048,           
-        'tpu_dim': 170,
+        'pixel_pitch_um': 2.2,       
+        'sensor_res': 4096,           
+        'tpu_dim': 224,
         
         # altitudes
         'alt_threshold_km': 600.0,    
@@ -51,11 +51,11 @@ if __name__ == "__main__":
 
         # power
         'battery_capacity_wh': 1.5,
-        'solar_generation_mw': 1600.0, 
+        'solar_generation_mw': 1800.0, 
 
     })
 
-    # sim_eleo.run_case_study("eLEO_01_Baseline", config_overrides=eleo_cfg, events=None)
+    sim_eleo.run_case_study("eLEO_01_Baseline", config_overrides=eleo_cfg, events=None)
 
     # Crank up the initial generation so the TPU starts "energy unlimited"
     degraded_cfg = eleo_cfg.copy()
@@ -70,7 +70,7 @@ if __name__ == "__main__":
         {'start': 16500, 'duration': 50000, 'solar_scale': 0.5} 
     ]
     
-    sim_eleo.run_case_study("eLEO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)
+    # sim_eleo.run_case_study("eLEO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)
 
     """
     A pretty solid case config!
