@@ -368,6 +368,7 @@ class GridStatsPlotting:
     def plot_efficiency_overview(self, filename="grid_efficiency_overview.pdf"):
         import numpy as np
         import matplotlib.pyplot as plt
+        import re
         from pathlib import Path
 
         # Enforce global serif font layout for native LaTeX integration
@@ -381,8 +382,20 @@ class GridStatsPlotting:
             return
 
         # Stacked 2-row layout, crunched vertically to 5.5 inches height
-        fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(3.5, 5.5), gridspec_kw={'hspace': 0.5})
+        fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(3.5, 4), gridspec_kw={'hspace': 0.5})
         cmap = plt.get_cmap("magma_r")
+
+        # Callback to clean up raw model names for the x-axis
+        def clean_model_name(name):
+            # Strip "Grid" and any trailing underscore or space
+            name = re.sub(r'^Grid[_ ]?', '', name)
+            # Swap 'A' for the native LaTeX alpha symbol
+            name = name.replace('A', r'$\alpha$=')
+            # Kill leading zeros on depths (e.g., D02 -> D2, D004 -> D4)
+            name = re.sub(r'D0+(\d+)', r'D=\1', name)
+            # Replace any remaining underscores with spaces for a cleaner look
+            name = name.replace('_', ' ')
+            return name
 
         def plot_stack(ax, sort_col, total_col, correct_col, title, unit):
             sorted_df = self.df.sort_values(sort_col, ascending=True)
@@ -405,13 +418,16 @@ class GridStatsPlotting:
                 ax.bar(x[i], total[i] - correct[i], bottom=correct[i], color=c_base, alpha=0.3, edgecolor='#333333', linewidth=0.8)
 
             # Paper-ready typography
-            ax.set_title(title, fontsize=12, fontweight='bold', pad=10)
+            #ax.set_title(title, fontsize=12, pad=10)
             ax.set_ylabel(unit, fontsize=11)
             ax.tick_params(axis="y", labelsize=10)
             
-            # X-ticks applied to every subplot, downsized font significantly to 8pt
+            # Intercept and format the labels using the callback
+            formatted_names = [clean_model_name(n) for n in local_names]
+            
+            # X-ticks applied to every subplot, downsized font significantly
             ax.set_xticks(x)
-            ax.set_xticklabels(local_names, rotation=45, ha="right", fontsize=8)
+            ax.set_xticklabels(formatted_names, rotation=90, ha="right", fontsize=8)
             
             # Clean backdrop
             ax.grid(False)
@@ -424,7 +440,7 @@ class GridStatsPlotting:
             "Inf_per_Sec",
             "Correct_Inf_per_Sec",
             "Correct Inferences per Second",
-            "Throughput (Inf/s)",
+            "Inferences/second",
         )
 
         plot_stack(
@@ -433,7 +449,7 @@ class GridStatsPlotting:
             "Inf_per_Joule",
             "Correct_Inf_per_Joule",
             "Correct Inferences Per Joule",
-            "Efficiency (Inf/J)",
+            "Inferences/Joule",
         )
 
         plt.tight_layout()
