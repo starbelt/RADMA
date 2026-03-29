@@ -10,10 +10,95 @@ import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter
 import pathlib, os
-from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
+from path_utils import get_repo_root
 import matplotlib.pyplot as plt
 
 # helpers and diagnostic plots
+def plot_methodology_trace(directory, psu_voltage=5.0, r_shunt=0.2, output_filename="methodology_trace.pdf"):
+    """
+    Creates a narrow, paper-ready vertical stack showing the digital trigger 
+    and the resulting analog power trace. Isolates ~3 inferences and trims the first.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+
+    # Enforce global serif font layout for native LaTeX integration
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
+
+    parser = SaleaeOutputParsing(directory)
+    
+    if parser.rising is None or len(parser.rising) < 4:
+        print("[WARN] Not enough inferences found in trace to plot 3 clean ones.")
+        return
+
+    # Skip the 1st inference (index 0), grab the next 3 (indices 1, 2, 3)
+    pad_s = 0.01  # 10ms padding on either side
+    start_time = parser.rising[1] - pad_s
+    end_time = parser.falling[3] + pad_s
+
+    # --- Analog Data Extraction & Power Calculation ---
+    ana_mask = (parser.t_analog >= start_time) & (parser.t_analog <= end_time)
+    t_ana = parser.t_analog[ana_mask]
+    v1 = parser.v1[ana_mask]
+    v2 = parser.v2[ana_mask]
+
+    current = (v1 - v2) / r_shunt       # Amps
+    power_mw = current * psu_voltage * 1000  # Milliwatts
+
+    # Normalize time to start at 0 ms for the plot
+    t_ana_ms = (t_ana - start_time) * 1000
+
+    # --- Digital Data Extraction ---
+    dig_mask = (parser.t_digital >= start_time) & (parser.t_digital <= end_time)
+    t_dig = parser.t_digital[dig_mask]
+    d = parser.d[dig_mask]
+    t_dig_ms = (t_dig - start_time) * 1000
+
+    # --- Plotting ---
+    # Very narrow width (3.0 inches) to fit nicely next to the hardware photo
+    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(3.0, 4.0), sharex=True, gridspec_kw={'hspace': 0.15})
+
+    # Top Pane: Digital Trace
+    ax1.step(t_dig_ms, d, where="post", color='#333333', linewidth=1.5)
+    ax1.set_ylabel("Logic State", fontsize=11)
+    
+    # Clean up digital y-axis to just show High/Low
+    ax1.set_ylim(-0.2, 1.2)
+    ax1.set_yticks([0, 1])
+    ax1.set_yticklabels(['Idle', 'Active'], fontsize=10)
+    
+    # Bottom Pane: Power Trace
+    # Using a nice bold color (like Hokie Maroon) to contrast with the photo
+    ax2.plot(t_ana_ms, power_mw, color='#861F41', linewidth=1.2)
+    ax2.set_ylabel("Power (mW)", fontsize=11)
+    ax2.set_xlabel("Time (ms)", fontsize=11)
+    ax2.tick_params(axis="both", labelsize=10)
+    
+    # Optional: Lightly shade the active power regions to visually link the two panes
+    for r, f in zip(parser.rising[1:4], parser.falling[1:4]):
+        r_ms = (r - start_time) * 1000
+        f_ms = (f - start_time) * 1000
+        ax2.axvspan(r_ms, f_ms, color='gray', alpha=0.15, lw=0)
+
+    # Paper-ready styling
+    for ax in [ax1, ax2]:
+        ax.grid(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+    plt.tight_layout()
+    
+    # Save as PDF
+    pdf_filename = Path(output_filename).with_suffix('.pdf')
+    plt.savefig(pdf_filename, format='pdf', bbox_inches='tight')
+    plt.close(fig)
+    print(f"[PLOT] Saved methodology trace to {pdf_filename}")
+
 def plot_saleae_trace(directory, psu_voltage=5.0, r_shunt=0.2, plot_energy_bars=True):
     parser = SaleaeOutputParsing(directory)
     zoom_s = 0.2
@@ -313,9 +398,19 @@ class SaleaeOutputParsing:
             return mean_power, np.array(powers), mean_energy, np.array(energies)
 
 if __name__ == "__main__":
+
     REPO_ROOT = get_repo_root()
+    target_dir = REPO_ROOT / "results/captures/IMG_CLASS02/MobileNet V1 (1.0)"
     
-    plot_saleae_trace(REPO_ROOT/"results/captures/IMG_CLASS02/EfficientNet-EdgeTpu (S)", psu_voltage=5.0, r_shunt=0.2, plot_energy_bars=True)
+    # Generate the methodology plot
+    plot_methodology_trace(
+        directory=target_dir, 
+        psu_voltage=5.0, 
+        r_shunt=0.2, 
+        output_filename="methodology_trace_figure.pdf"
+    )
+
+    # plot_saleae_trace(REPO_ROOT/"results/captures/IMG_CLASS02/EfficientNet-EdgeTpu (S)", psu_voltage=5.0, r_shunt=0.2, plot_energy_bars=True)
 
     # r_shunt = 0.1  # ohms
     # parser = SaleaeOutputParsing()  # defaults to cwd
