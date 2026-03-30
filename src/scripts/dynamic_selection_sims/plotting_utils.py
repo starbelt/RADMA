@@ -222,6 +222,146 @@ def plot_energy(logs, naive_states, case_name, cfg, output_dir,
     plt.savefig(save_path, format='pdf', bbox_inches='tight')
     plt.close()
 
+def plot_energy_margin(logs, naive_states, case_name, output_dir, 
+                        plot_accuracy_baseline=False, 
+                        plot_efficiency_baseline=False, 
+                        plot_throughput_baseline=False,
+                        plot_true_naive_baseline=False,
+                        plot_cheapest_baseline=False,
+                        plot_fastest_baseline=False):
+    """
+    Plots the Energy Margin (Surplus vs Deficit) against 
+    the dynamic requirements of the orbit, color-coded by active model.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+
+    # Enforce global serif font layout for native LaTeX integration
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
+
+    set_plot_style()
+    t_plot = np.array(logs['time_rel'])
+    demand = np.array(logs['demand_infs'])
+    budget = np.array(logs['step_budget_j'])
+
+    # Standard single-column sizing
+    fig, ax = plt.subplots(figsize=(3.5, 3.0))
+
+    baseline_colors = {
+        'True_Naive': 'tab:gray',
+        'High_Accuracy': 'tab:blue',
+        'High_Throughput': 'tab:green',
+        'High_Efficiency': 'tab:yellow',
+        'Cheapest': 'tab:purple',
+        'Fastest': 'tab:red'
+    }
+
+    handles_base = []
+    labels_base = []
+
+    # --- Static Baselines (Togglable) ---
+    # Margin = Budget - Required Energy (Demand * Model Energy Cost)
+    if plot_true_naive_baseline and 'True_Naive' in naive_states:
+        margin = budget - (demand * naive_states['True_Naive']['model']['eng_j'])
+        line, = ax.plot(t_plot, margin, color=baseline_colors['True_Naive'],
+                alpha=0.8, linewidth=1.0, label='True Naive')
+        handles_base.append(line)
+        labels_base.append('True Naive')
+
+    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
+        margin = budget - (demand * naive_states['High_Accuracy']['model']['eng_j'])
+        line, = ax.plot(t_plot, margin, color=baseline_colors['High_Accuracy'],
+                alpha=0.8, linewidth=1.0, label='High Accuracy')
+        handles_base.append(line)
+        labels_base.append('High Accuracy')
+        
+    if plot_throughput_baseline and 'High_Throughput' in naive_states:
+        margin = budget - (demand * naive_states['High_Throughput']['model']['eng_j'])
+        line, = ax.plot(t_plot, margin, color=baseline_colors['High_Throughput'],
+                alpha=0.8, linewidth=1.0, label='High Throughput')
+        handles_base.append(line)
+        labels_base.append('High Throughput')
+        
+    if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
+        margin = budget - (demand * naive_states['High_Efficiency']['model']['eng_j'])
+        line, = ax.plot(t_plot, margin, color=baseline_colors['High_Efficiency'],
+                alpha=0.8, linewidth=1.0, label='High Efficiency')
+        handles_base.append(line)
+        labels_base.append('High Efficiency')
+    
+    if plot_cheapest_baseline and 'Cheapest' in naive_states:
+        margin = budget - (demand * naive_states['Cheapest']['model']['eng_j'])
+        line, = ax.plot(t_plot, margin, color=baseline_colors['Cheapest'],
+                alpha=0.8, linewidth=1.0, label='Maximum inf/J')
+        handles_base.append(line)
+        labels_base.append('Maximum inf/J')
+    
+    if plot_fastest_baseline and 'Fastest' in naive_states:
+        margin = budget - (demand * naive_states['Fastest']['model']['eng_j'])
+        line, = ax.plot(t_plot, margin, color=baseline_colors['Fastest'],
+                alpha=0.8, linewidth=1.0, label='Maximum inf/s')
+        handles_base.append(line)
+        labels_base.append('Maximum inf/s')
+
+    # --- Dynamic System (RADMA) --- 
+    active_eng_j = np.array(logs['active_eng_j'])
+    dynamic_margin = budget - (demand * active_eng_j)
+    
+    # Generate the color mapping and plot the segmented dynamic line
+    color_dict = _get_model_colors(logs['model_name'])
+    handles_dyn, labels_dyn = _plot_segmented_line(
+        ax, t_plot, dynamic_margin, logs['model_name'], color_dict, ylabel='Energy Margin (J)'
+    )
+
+    # Zero Line (Requirement exactly met)
+    line_zero = ax.axhline(0, color='black', linestyle=':', linewidth=1.0, alpha=0.5, label='Budget Met (0 Margin)')
+
+    # Highlighting
+    fill_surplus = ax.fill_between(t_plot, 0, dynamic_margin, where=(dynamic_margin > 0),
+                    color='tab:green', alpha=0.15, label='Surplus Energy')
+    fill_deficit = ax.fill_between(t_plot, 0, dynamic_margin, where=(dynamic_margin < 0),
+                    color='tab:red', alpha=0.15, label='Energy Deficit')
+
+    # Formatting overrides
+    ax.set_ylabel('Energy Margin (J/step)', fontsize=10)
+    ax.set_xlabel('Mission Time (s)', fontsize=10)
+    ax.tick_params(axis='both', labelsize=8)
+
+    ax.grid(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    all_raw_handles = handles_dyn + handles_base + [line_zero, fill_surplus, fill_deficit]
+    all_raw_labels = labels_dyn + labels_base + ['Budget Met (0 Margin)', 'Surplus Energy', 'Energy Deficit']
+    
+    unique_labels = []
+    unique_handles = []
+    
+    # Deduplicate legend items
+    for h, l in zip(all_raw_handles, all_raw_labels):
+        if l not in unique_labels:
+            unique_labels.append(l)
+            unique_handles.append(h)
+
+    ax.legend(unique_handles, unique_labels, loc='upper center',
+            bbox_to_anchor=(0.5, -0.25), ncol=2, frameon=False, fontsize=8)
+    
+    ax.set_xlim(0,30000)
+    ax.set_ylim(-0.6
+                ,0.6)
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.35) # Make room for the legend underneath
+
+    save_path = Path(output_dir) / f"{case_name}_energy_margin.pdf"
+    plt.savefig(save_path, format='pdf', bbox_inches='tight')
+    plt.close()
+
 def plot_inference_margin(logs, naive_states, case_name, output_dir, 
                         plot_accuracy_baseline=False, 
                         plot_efficiency_baseline=False, 

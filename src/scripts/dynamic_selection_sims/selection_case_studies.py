@@ -176,28 +176,29 @@ class ContinuousSatSim:
     def _process_dynamic_step(self, viable_models, infs_for_sec, step_budget_j, dt, cpu_blocked, dynamic_recharging):
         drops = {'power': 0.0, 'time': 0.0, 'energy': 0.0}
 
+        # Return 0.0 for active_ips and active_eng_j when idle, blocked, or recharging
         if infs_for_sec <= 0:
-            return "blind", 0.0, 0.0, 0.0, drops, 0.0
+            return "blind", 0.0, 0.0, 0.0, drops, 0.0, 0.0
 
         if cpu_blocked:
             drops['power'] += infs_for_sec
-            return "blocked", 0.0, 0.0, 0.0, drops, 0.0
+            return "blocked", 0.0, 0.0, 0.0, drops, 0.0, 0.0
 
         if dynamic_recharging or step_budget_j <= 1e-6:
             drops['power'] += infs_for_sec
-            return "recharge", 0.0, 0.0, 0.0, drops, 0.0
+            return "recharge", 0.0, 0.0, 0.0, drops, 0.0, 0.0
 
         model, reason = self._select_model(viable_models, step_budget_j, dt, infs_for_sec)
         
         if model is None:
             drops['power'] += infs_for_sec
-            return "recharge", 0.0, 0.0, 0.0, drops, 0.0
+            return "recharge", 0.0, 0.0, 0.0, drops, 0.0, 0.0
 
         active_model = model['Model name']
         current_acc = model['acc_decimal']
         
-
         active_ips = 1.0 / model['lat_s']
+        active_eng_j = model['eng_j'] 
         
         max_t_infs = dt / model['lat_s']
         max_e_infs = step_budget_j / model['eng_j']
@@ -213,7 +214,8 @@ class ContinuousSatSim:
                 
         proc_energy_j = processed_infs * model['eng_j']
 
-        return active_model, current_acc, processed_infs, proc_energy_j, drops, active_ips
+
+        return active_model, current_acc, processed_infs, proc_energy_j, drops, active_ips, active_eng_j
     
     ## Continuous Time Naive Comparison
 
@@ -353,7 +355,7 @@ class ContinuousSatSim:
             'time_rel': [], 'battery_wh': [], 'throughput_infs': [], 'backlog_infs': [], 'model_name': [],
             'avg_accuracy': [], 'active_power_w': [], 'is_lit': [], 
             'demand_infs': [], 'alt_km': [], 'speed_km_s': [], 'cum_correct': [], 'dwell_time_s': [],
-            'active_ips': [] 
+            'active_ips': [], 'active_eng_j': [], 'step_budget_j': []
         }
         
         t_start = sim_data['Time (EpSec)'].iloc[0]
@@ -376,7 +378,7 @@ class ContinuousSatSim:
                 dynamic_recharging = False
 
             # run dynamic step
-            active_model, acc, processed, proc_energy_j, drops, active_ips = self._process_dynamic_step(
+            active_model, acc, processed, proc_energy_j, drops, active_ips, active_eng_j = self._process_dynamic_step(
                 viable_models, infs_for_sec, step_budget_j, dt, cpu_blocked, dynamic_recharging
             )
 
@@ -411,6 +413,8 @@ class ContinuousSatSim:
             logs['dwell_time_s'].append(row['dwell_time_s'])
             logs['cum_correct'].append(total_infs_correct)
             logs['active_ips'].append(active_ips)
+            logs['active_eng_j'].append(active_eng_j)
+            logs['step_budget_j'].append(step_budget_j)
 
         self._print_verbose_report(case_name, report_stats, logs, sim_data, cfg, naive_states)
         
@@ -422,6 +426,10 @@ class ContinuousSatSim:
         plot_energy(logs, naive_states, case_name, cfg, self.output_dir,
                     plot_accuracy_baseline=True, 
                     plot_cheapest_baseline =True)
+        
+        plot_energy_margin(logs, naive_states, case_name, self.output_dir,
+                            plot_accuracy_baseline=True,
+                            plot_cheapest_baseline=True)
         ## Some one-off plots for motivation and whatnot :)
         # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         #plot_single(logs, case_name, self.output_dir)
