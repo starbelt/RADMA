@@ -79,7 +79,9 @@ def plot_energy(logs, naive_states, case_name, cfg, output_dir,
                 plot_accuracy_baseline=False, 
                 plot_efficiency_baseline=False, 
                 plot_throughput_baseline=False,
-                plot_true_naive_baseline=False):
+                plot_true_naive_baseline=False,
+                plot_cheapest_baseline=False,
+                plot_fastest_baseline=False):
     """
     Plots a single-pane energy management trace for a mission, comparing 
     dynamic model swapping against static baselines. Formatted for single-column.
@@ -104,9 +106,12 @@ def plot_energy(logs, naive_states, case_name, cfg, output_dir,
     baseline_colors = {
         'True_Naive': 'tab:gray',
         'High_Accuracy': 'tab:blue', 
-        'High_Throughput': 'tab:red', 
-        'High_Efficiency': 'tab:purple'
+        'High_Throughput': 'tab:green',
+        'High_Efficiency': 'tab:yellow',
+        'Cheapest': 'tab:purple',
+        'Fastest': 'tab:red'
     }
+    
     
     color_dict = _get_model_colors(logs['model_name'])
     
@@ -137,6 +142,18 @@ def plot_energy(logs, naive_states, case_name, cfg, output_dir,
                 color=baseline_colors['High_Efficiency'], alpha=0.5, linewidth=1.5, label='Batt (High Eff)')
         handles_batt.append(line)
         labels_batt.append('Batt (High Eff)')
+
+    if plot_cheapest_baseline and 'Cheapest' in naive_states:
+        line, = ax.plot(t_plot, naive_states['Cheapest']['logs_battery_wh'], 
+                color=baseline_colors['Cheapest'], alpha=0.5, linewidth=1.5, label='Batt (Max Inf/J)')
+        handles_batt.append(line)
+        labels_batt.append('Batt (Max Inf/J)')
+
+    if plot_fastest_baseline and 'Fastest' in naive_states:
+        line, = ax.plot(t_plot, naive_states['Cheapest']['logs_battery_wh'], 
+                color=baseline_colors['Cheapest'], alpha=0.5, linewidth=1.5, label='Batt (Max Inf/s)')
+        handles_batt.append(line)
+        labels_batt.append('Batt (Max Inf/s)')
 
     # System Thresholds
     line_lock = ax.axhline(cfg['battery_capacity_wh']*cfg['compute_disable_pct'], color='tab:red', linestyle=':', linewidth=1.0, label='Lock Limit')
@@ -209,7 +226,9 @@ def plot_inference_margin(logs, naive_states, case_name, output_dir,
                         plot_accuracy_baseline=False, 
                         plot_efficiency_baseline=False, 
                         plot_throughput_baseline=False,
-                        plot_true_naive_baseline=False):
+                        plot_true_naive_baseline=False,
+                        plot_cheapest_baseline=False,
+                        plot_fastest_baseline=False):
     """
     Plots the Inference Throughput Margin (Surplus vs Deficit) against 
     the dynamic requirements of the orbit, color-coded by active model.
@@ -235,8 +254,10 @@ def plot_inference_margin(logs, naive_states, case_name, output_dir,
     baseline_colors = {
         'True_Naive': 'tab:gray',
         'High_Accuracy': 'tab:blue',
-        'High_Throughput': 'tab:red',
-        'High_Efficiency': 'tab:purple'
+        'High_Throughput': 'tab:green',
+        'High_Efficiency': 'tab:yellow',
+        'Cheapest': 'tab:purple',
+        'Fastest': 'tab:red'
     }
 
     handles_base = []
@@ -270,8 +291,22 @@ def plot_inference_margin(logs, naive_states, case_name, output_dir,
                 alpha=0.8, linewidth=1.0, label='High Efficiency')
         handles_base.append(line)
         labels_base.append('High Efficiency')
+    
+    if plot_cheapest_baseline and 'Cheapest' in naive_states:
+        margin = naive_states['Cheapest']['ips'] - demand
+        line, = ax.plot(t_plot, margin, color=baseline_colors['Cheapest'],
+                alpha=0.8, linewidth=1.0, label='Maximum inf/J')
+        handles_base.append(line)
+        labels_base.append('Maximum inf/J')
+    
+    if plot_fastest_baseline and 'Fastest' in naive_states:
+        margin = naive_states['Fastest']['ips'] - demand
+        line, = ax.plot(t_plot, margin, color=baseline_colors['Fastest'],
+                alpha=0.8, linewidth=1.0, label='Maximum inf/s')
+        handles_base.append(line)
+        labels_base.append('FMaximum inf/s')
 
-    # --- Dynamic System (RADMA) ---
+    # --- Dynamic System (RADMA) --- 
     active_ips = np.array(logs['active_ips'])
     dynamic_margin = active_ips - demand
     
@@ -312,7 +347,7 @@ def plot_inference_margin(logs, naive_states, case_name, output_dir,
             unique_handles.append(h)
 
     ax.legend(unique_handles, unique_labels, loc='upper center',
-              bbox_to_anchor=(0.5, -0.25), ncol=2, frameon=False, fontsize=8)
+            bbox_to_anchor=(0.5, -0.25), ncol=2, frameon=False, fontsize=8)
 
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.35) # Make room for the legend underneath
@@ -320,6 +355,7 @@ def plot_inference_margin(logs, naive_states, case_name, output_dir,
     save_path = Path(output_dir) / f"{case_name}_throughput_margin.pdf"
     plt.savefig(save_path, format='pdf', bbox_inches='tight')
     plt.close()
+
 def plot_mission(logs, naive_states, case_name, cfg, output_dir, 
                 plot_accuracy_baseline=False, 
                 plot_efficiency_baseline=False, 
@@ -342,8 +378,10 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     baseline_colors = {
         'True_Naive': 'tab:gray',
         'High_Accuracy': 'tab:blue', 
-        'High_Throughput': 'tab:red', 
-        'High_Efficiency': 'tab:purple'
+        'High_Throughput': 'tab:green',
+        'High_Efficiency': 'tab:yellow',
+        'Cheapest': 'tab:purple',
+        'Fastest': 'tab:red'
     }
     
     color_dict = _get_model_colors(logs['model_name'])

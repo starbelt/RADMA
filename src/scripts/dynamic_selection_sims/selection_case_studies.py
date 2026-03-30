@@ -316,7 +316,9 @@ class ContinuousSatSim:
             'True_Naive': self.models.loc[self.models['acc_decimal'].idxmax()],
             'High_Accuracy': self.models[self.models['Model name'] == 'Grid A1.25 D06'].iloc[0], #viable_models.loc[viable_models['acc_decimal'].idxmax()],
             'High_Throughput': viable_models.loc[viable_models['correct_infs_per_sec'].idxmax()],
-            'High_Efficiency': viable_models.loc[viable_models['correct_infs_per_joule'].idxmax()]
+            'High_Efficiency': viable_models.loc[viable_models['correct_infs_per_joule'].idxmax()],
+            'Fastest':viable_models.loc[viable_models['lat_s'].idxmin()],
+            'Cheapest':viable_models.loc[viable_models['eng_j'].idxmin()]
         }
 
         battery_cap_j = cfg['battery_capacity_wh'] * 3600.0
@@ -414,15 +416,12 @@ class ContinuousSatSim:
         
         plot_orbit_dynamics(logs, case_name, self.output_dir)
         plot_inference_margin(logs, naive_states, case_name, self.output_dir,
-                            plot_accuracy_baseline=True, 
-                            plot_efficiency_baseline=True, 
-                            plot_throughput_baseline=True,
-                            plot_true_naive_baseline= False)
+                            plot_accuracy_baseline=True,
+                            plot_cheapest_baseline=True 
+                            )
         plot_energy(logs, naive_states, case_name, cfg, self.output_dir,
                     plot_accuracy_baseline=True, 
-                    plot_efficiency_baseline=True, 
-                    plot_throughput_baseline=True,
-                    plot_true_naive_baseline= False)
+                    plot_cheapest_baseline =True)
         ## Some one-off plots for motivation and whatnot :)
         # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         #plot_single(logs, case_name, self.output_dir)
