@@ -31,7 +31,7 @@ if __name__ == "__main__":
         model_json_path=model_json, 
         output_dir=out_dir, 
         sat_prefix='eLEO', 
-        num_orbits=10,
+        num_orbits=2,
         model_source='Custom' 
     )
     
