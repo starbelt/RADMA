@@ -10,7 +10,8 @@ import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter
 import pathlib, os
-from path_utils import get_repo_root
+from libs.coral_tpu_characterization.src.scripts.utils.path_utils import get_repo_root
+# from path_utils import get_repo_root
 import matplotlib.pyplot as plt
 
 # helpers and diagnostic plots

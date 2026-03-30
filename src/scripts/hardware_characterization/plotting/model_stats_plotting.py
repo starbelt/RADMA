@@ -1335,6 +1335,100 @@ def plot_pretrained_correct_metrics_from_json(json_path: pathlib.Path, filename:
     print(f"[PLOT] Saved Pre-Trained correct metrics plot to {pdf_filename}")
     plt.close(fig)
 
+def plot_motivational_punchline(json_path: pathlib.Path, filename="motivational_punchline.pdf"):
+    import json
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+    
+    # Enforce global serif font layout for native LaTeX integration
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
+    
+    if not json_path.exists():
+        print(f"[ERROR] JSON file not found: {json_path}")
+        return
+        
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+        
+    exclusions = ["MobileNet V1 (TF_ver_2.0)", "MobileNet V2 (TF_ver_2.0)", "Inception V2"]
+    
+    pretrained = [
+        d for d in data 
+        if d.get("Source") == "PreTrained" and d.get("Model name") not in exclusions
+    ]
+    
+    for d in pretrained:
+        acc_frac = d["Top-1 Accuracy"] / 100.0
+        d["correct_inf_sec"] = (1000.0 / d["Measured Inference Time (ms)"]) * acc_frac
+        d["correct_inf_joule"] = (1000.0 / d["Energy per Inference (mJ)"]) * acc_frac
+
+    # Find the 5 "Champion" Models
+    champions = {
+        "Fastest": min(pretrained, key=lambda x: x["Measured Inference Time (ms)"]),
+        "Least Energy": min(pretrained, key=lambda x: x["Energy per Inference (mJ)"]),
+        "Most Accurate": max(pretrained, key=lambda x: x["Top-1 Accuracy"]),
+        "Max Throughput": max(pretrained, key=lambda x: x["correct_inf_sec"]),
+        "Max Efficiency": max(pretrained, key=lambda x: x["correct_inf_joule"])
+    }
+
+    def clean_name(name):
+        return name.replace("MobileNet", "MB").replace("EfficientNet-EdgeTpu", "EffNet").replace("Inception", "Inc")
+
+    # Prepare data for Time-Limited (Throughput)
+    time_data = []
+    for label, model in champions.items():
+        full_label = f"{label}\n({clean_name(model['Model name'])})"
+        time_data.append((full_label, model["correct_inf_sec"]))
+    # Sort by value (index 1)
+    time_data.sort(key=lambda x: x[1])
+    
+    # Prepare data for Energy-Limited (Efficiency)
+    energy_data = []
+    for label, model in champions.items():
+        full_label = f"{label}\n({clean_name(model['Model name'])})"
+        energy_data.append((full_label, model["correct_inf_joule"]))
+    # Sort by value (index 1)
+    energy_data.sort(key=lambda x: x[1])
+
+    fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(4.0, 7.0), gridspec_kw={'hspace': 0.7})
+    cmap = plt.get_cmap('magma_r')
+    colors = cmap(np.linspace(0.2, 0.8, 5))
+
+    def render_sub_plot(ax, sorted_pairs, title, ylabel):
+        labels = [p[0] for p in sorted_pairs]
+        values = [p[1] for p in sorted_pairs]
+        x_pos = np.arange(len(labels))
+        
+        ax.bar(x_pos, values, color=colors, edgecolor='#333333', linewidth=0.8)
+        ax.set_title(title, fontsize=12, fontweight='bold', pad=12)
+        ax.set_ylabel(ylabel, fontsize=10)
+        
+        # Apply unique x-axis to this specific subplot
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(labels, rotation=35, ha="right", fontsize=8)
+        
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.set_ylim(0, max(values) * 1.3)
+        
+        for j, val in enumerate(values):
+            ax.text(j, val + (max(values)*0.02), f"{int(np.floor(val))}", 
+                    ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+    render_sub_plot(axes[0], time_data, "Time-Limited Scenario", "Correct Inferences\n(per Second)")
+    render_sub_plot(axes[1], energy_data, "Energy-Limited Scenario", "Correct Inferences\n(per Joule)")
+
+    # Save logic
+    safe_filename = Path(filename).with_suffix('.pdf')
+    plt.savefig(safe_filename, format='pdf', bbox_inches="tight")
+    plt.close(fig)
+    print(f"[PLOT] Saved polished figure to {safe_filename}")
+
 
 if __name__ == "__main__":
 
@@ -1351,6 +1445,9 @@ if __name__ == "__main__":
 
     pretrained_out_correct = REPO_ROOT / "results/plots/pretrained_correct_metrics.png"
     plot_pretrained_correct_metrics_from_json(json_path, pretrained_out_correct)
+
+    punchline_out_path = REPO_ROOT / "results/plots/motivational_punchline.pdf"
+    plot_motivational_punchline(json_path,str(punchline_out_path))
 
     ## Baseline Model Parameter Plotting
     #plots.img_class_plt()
