@@ -44,4 +44,4 @@ if __name__ == "__main__":
         {'start': 10000, 'duration': 50000, 'solar_scale': 0.65} 
     ]
     
-    sim_sso.run_case_study("SSO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)
+    # sim_sso.run_case_study("SSO_02_Panel_Failure", config_overrides=degraded_cfg, events=solar_failure_events)
