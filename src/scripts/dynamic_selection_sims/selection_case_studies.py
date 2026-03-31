@@ -69,7 +69,7 @@ class ContinuousSatSim:
         cfg.update({
             'focal_length_mm': 85.0,
             'battery_capacity_wh': 1.5,
-            'solar_generation_mw': 800.0, 
+            'solar_generation_mw': 1000.0, 
         })
         return cfg
 
@@ -131,7 +131,7 @@ class ContinuousSatSim:
                 if e['start'] <= t_rel < (e['start'] + e['duration']):
                     disturb_power_w += e.get('power_w', 0.0)
                     extra_demand_ips += e.get('extra_demand_ips', 0.0)
-                    solar_scale *= e.get('solar_scale', 1.0) 
+                    solar_scale *= e.get('solar_scale', 1.0)  
                     if e.get('blocked', False): cpu_blocked = True
 
         eclipse_pct = cfg.get('eclipse_illumination_pct', 0.0)
@@ -142,39 +142,51 @@ class ContinuousSatSim:
         env_energy_j = (solar_w - base_w) * dt 
         
         infs_for_this_second = (row['demand_infs_per_sec'] + extra_demand_ips) * dt
+        battery_cap_j = cfg['battery_capacity_wh'] * 3600.0
+        
+        t_rem = max(dt, row['phase_end_time'] - t_abs)
+        eclipse_solar_w = (cfg['solar_generation_mw'] / 1000.0) * eclipse_pct * solar_scale
 
-        phase_end_time = row['phase_end_time']
-        t_rem = max(dt, phase_end_time - t_abs)
-        
-        safe_disable_j = limit_disable_j * 1.02
-        
         if row['is_lit'] > 0.5:
-            upcoming_eclipse_s = row['next_eclipse_duration_s']
-            eclipse_survival_j = safe_disable_j + (base_w * upcoming_eclipse_s)
+            # Sunlight: Target the end of the NEXT eclipse
+            t_eclipse = row['next_eclipse_duration_s']
+            T_horizon = max(dt, t_rem + t_eclipse)
+            future_gen_j = (solar_w * t_rem) + (eclipse_solar_w * t_eclipse)
             
-            target_j = max(limit_enable_j, eclipse_survival_j)
-            
-            battery_cap_j = cfg['battery_capacity_wh'] * 3600.0
-            target_j = min(target_j, battery_cap_j * 0.95)
+            # In sunlight, we have a long horizon, use the standard 2% safety buffer
+            dynamic_safe_disable_j = limit_disable_j * 1.02
         else:
-            target_j = safe_disable_j
+            # Eclipse: Target the end of the CURRENT eclipse
+            T_horizon = max(dt, t_rem)
+            future_gen_j = solar_w * t_rem
             
-        net_power_w = solar_w - base_w
-        expected_end_battery_j = current_battery_j + (net_power_w * t_rem)
-        usable_surplus_j = expected_end_battery_j - target_j
+            # --- THE FIX: Margin Relaxation ---
+            # As the horizon collapses in the final seconds of the eclipse, the math becomes 
+            # infinitely sensitive to tiny quantization errors from chunky model energy costs.
+            # We smoothly relax the safety buffer from 2% down to 0.5% in the final 60 seconds 
+            # to absorb these floating-point errors without instantly zeroing the budget.
+            if T_horizon < 60.0:
+                relax_factor = T_horizon / 60.0
+                dynamic_safe_disable_j = limit_disable_j * (1.005 + 0.015 * relax_factor)
+            else:
+                dynamic_safe_disable_j = limit_disable_j * 1.02
+
+        future_base_j = base_w * T_horizon
+
+        # Pure physics: available energy over the horizon using the dynamic buffer
+        projected_surplus_j = current_battery_j + future_gen_j - future_base_j - dynamic_safe_disable_j
         
-        # --- BUG FIX 2: Bounded Planning Horizon ---
-        # Prevent "horizon collapse" (splurging when t_rem -> 0) by enforcing a minimum 
-        # time constant for spending the surplus energy. We'll utilize the budget_horizon 
-        # already defined in your BASE_SYSTEM config.
-        budget_horizon_s = cfg.get('budget_horizon_frames', 1) * dt
-        planning_horizon_s = max(budget_horizon_s, t_rem)
-        
-        if usable_surplus_j > 0:
-            step_energy_budget_j = (usable_surplus_j / planning_horizon_s) * dt
-        else:
-            step_energy_budget_j = 0.0
-            
+        # True Horizon distribution
+        base_budget_per_sec = max(0.0, projected_surplus_j) / T_horizon
+        step_energy_budget_j = base_budget_per_sec * dt
+
+        # Solar Spillway
+        if current_battery_j > (battery_cap_j * 0.95):
+            spill_factor = (current_battery_j - (battery_cap_j * 0.95)) / (battery_cap_j * 0.05)
+            spill_budget_j = max(0.0, env_energy_j) * min(1.0, spill_factor)
+            step_energy_budget_j = max(step_energy_budget_j, spill_budget_j)
+
+        # Hard safety cap guarantees we never actually dip below the true physical death line
         hard_surplus_j = max(0.0, current_battery_j + env_energy_j - limit_disable_j)
         step_energy_budget_j = min(step_energy_budget_j, hard_surplus_j)
 
