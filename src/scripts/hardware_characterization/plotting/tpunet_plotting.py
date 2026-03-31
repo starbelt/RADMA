@@ -679,13 +679,15 @@ class GridStatsPlotting:
             print("[warn] no data available for 3d plot.")
             return
 
-        print(f"\n[plot] generating 3d accuracy surface (resolution: {resolution}x{resolution})...")
+        print(f"\n[plot] generating 3d continuous yield surface (resolution: {resolution}x{resolution})...")
 
         max_inf_sec = self.df["Inf_per_Sec"].max() * 1.05
         max_inf_joule = self.df["Inf_per_Joule"].max() * 1.05
         
-        req_inf_sec = np.linspace(0, max_inf_sec, resolution)
-        req_inf_joule = np.linspace(0, max_inf_joule, resolution)
+        req_inf_sec = np.linspace(1e-3, max_inf_sec, resolution)
+        req_inf_joule = np.linspace(1e-3, max_inf_joule, resolution)
+        
+        # X = Demand (infs/sec), Y = Required Efficiency (infs/joule)
         X, Y = np.meshgrid(req_inf_sec, req_inf_joule)
 
         models = self.df["Model name"].values
@@ -693,41 +695,47 @@ class GridStatsPlotting:
         inf_joule = self.df["Inf_per_Joule"].values
         accuracies = self.df["Top-1 Accuracy"].values 
 
-        valid_mask = (inf_sec[:, None, None] >= X) & (inf_joule[:, None, None] >= Y)
+        # No more divide-by-zero checks needed
+        energy_budget_j = X / Y
 
-        scores = np.full_like(valid_mask, -1.0, dtype=float)
-        scores[valid_mask] = np.broadcast_to(accuracies[:, None, None], valid_mask.shape)[valid_mask]
+        max_t_infs = inf_sec[:, None, None] 
+        max_e_infs = energy_budget_j * inf_joule[:, None, None]
+        demand_expanded = np.broadcast_to(X, (len(models), resolution, resolution))
 
-        Z = np.max(scores, axis=0)
-        best_idx = np.argmax(scores, axis=0)
+        usable_infs = np.minimum(max_t_infs, np.minimum(max_e_infs, demand_expanded))
+        expected_correct = usable_infs * (accuracies[:, None, None] / 100.0)
 
-        best_idx[Z == -1] = -1
-        Z[Z == -1] = 0.0  
+        best_idx = np.argmax(expected_correct, axis=0)
+        max_correct = np.max(expected_correct, axis=0)
+
+        Z = (max_correct / X) * 100.0
 
         cmap = plt.get_cmap("magma")
         model_colors = cmap(np.linspace(0.1, 0.85, len(models)))
         color_grid = np.full((resolution, resolution, 4), [0.9, 0.9, 0.9, 1.0])
         
         unique_winners = np.unique(best_idx)
-        valid_winners = [uid for uid in unique_winners if uid != -1]
         
         legend_patches = []
-        for uid in valid_winners:
+        for uid in unique_winners:
             color_grid[best_idx == uid] = model_colors[uid]
             legend_patches.append(Patch(color=model_colors[uid], label=models[uid]))
-            
-        legend_patches.append(Patch(color=(0.9, 0.9, 0.9), label='Unachievable'))
 
+        # Fix the padding to extend the edges horizontally instead of dropping to 0
         X_pad = np.pad(X, pad_width=1, mode='edge')
         Y_pad = np.pad(Y, pad_width=1, mode='edge')
-        Z_pad = np.pad(Z, pad_width=1, mode='constant', constant_values=0.0)
+        
+        Z_pad = np.pad(Z, pad_width=1, mode='constant', constant_values=0.0) 
+        
+        # This ensures the vertical walls inherit the model colors from the top surface
         color_grid_pad = np.pad(color_grid, ((1, 1), (1, 1), (0, 0)), mode='edge')
 
+        color_grid_pad = np.pad(color_grid, ((1, 1), (1, 1), (0, 0)), mode='edge')
         def render_subplot(ax, elev, azim, hide_axis=None):
             ax.plot_surface(
                 X_pad, Y_pad, Z_pad, 
                 facecolors=color_grid_pad,
-                edgecolor='#333333', # Clean dark edge for vector output
+                edgecolor='#333333', 
                 linewidth=0.2,
                 antialiased=True,
                 rcount=45,
@@ -740,9 +748,10 @@ class GridStatsPlotting:
             
             ax.set_xlabel("Required Inferences / Sec" if hide_axis != 'x' else "", fontsize=12, labelpad=8)
             ax.set_ylabel("Required Inferences / Joule" if hide_axis != 'y' else "", fontsize=12, labelpad=8)
-            ax.set_zlabel("Top-1 Acc (%)" if hide_axis != 'z' else "", fontsize=12, labelpad=8)
             
-            # Remove 3D grid and make pane backgrounds completely transparent 
+            # Updated Z-axis label to reflect the new metric
+            ax.set_zlabel("Effective Yield (%)" if hide_axis != 'z' else "", fontsize=12, labelpad=8) 
+            
             ax.grid(False)
             ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
             ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
@@ -769,7 +778,9 @@ class GridStatsPlotting:
             fig = plt.figure(figsize=(12, 10))
             ax = fig.add_subplot(111, projection='3d')
             render_subplot(ax, elev=35, azim=230)
-            ax.set_title("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=18, pad=15)
+            
+            # Updated Title
+            ax.set_title("Effective Yield vs. Resource Constraints", fontsize=18, pad=15)
             
             fig.legend(
                 handles=legend_patches, loc='lower center', 
@@ -783,7 +794,7 @@ class GridStatsPlotting:
             
         else:
             fig = plt.figure(figsize=(20.5, 6)) 
-            fig.suptitle("Maximum Achievable Accuracy vs. Resource Constraints", fontsize=20, fontweight='bold', y=1.05)
+            fig.suptitle("Effective Yield vs. Resource Constraints", fontsize=20, fontweight='bold', y=1.05)
 
             ax1 = fig.add_subplot(141, projection='3d')
             render_subplot(ax1, elev=90, azim=-90, hide_axis='z')
@@ -805,7 +816,6 @@ class GridStatsPlotting:
                 title="Selected Model", title_fontsize=14, fontsize=12
             )
             
-            # Ensures filename passed has .pdf
             safe_filename = Path(filename).with_suffix('.pdf')
             save_path = self.output_dir / safe_filename
             plt.savefig(save_path, format='pdf', bbox_inches="tight", pad_inches=0.2)
@@ -828,12 +838,12 @@ if __name__ == "__main__":
 
         # plotter.plot_standard_metrics()
         #plotter.plot_grouped_metrics()
-        plotter.plot_grouped_metrics_prod()
-        plotter.plot_efficiency_overview()
+        # plotter.plot_grouped_metrics_prod()
+        # plotter.plot_efficiency_overview()
         # eff, rate = plotter.find_champions()
 
         #plotter.plot_model_selection_heatmap(resolution=500)
-        #plotter.plot_3d_accuracy_surface(resolution = 300, interactive=False)
+        plotter.plot_3d_accuracy_surface(resolution = 300, interactive=False)
 
         # plotter.plot_3d_surface(specific_models=None, filename="grid_3d_all.png", title_suffix="(All Models)")
         # if eff and rate:

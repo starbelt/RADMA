@@ -723,7 +723,7 @@ def plot_delivered_yield(logs, naive_states, case_name, output_dir,
     if plot_cheapest_baseline and 'Cheapest' in naive_states:
         step_yield = get_baseline_step_yield(naive_states['Cheapest'])
         line, = ax.plot(t_plot, step_yield, color=baseline_colors['Cheapest'],
-                linestyle='--', alpha=0.8, linewidth=1.0, label='Maximum inf/J')
+                alpha=0.8, linewidth=1.0, label='Maximum inf/J')
         handles_base.append(line)
         labels_base.append('Maximum inf/J')
     
