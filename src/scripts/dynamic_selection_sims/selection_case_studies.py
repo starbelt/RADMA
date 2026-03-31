@@ -69,7 +69,7 @@ class ContinuousSatSim:
         cfg.update({
             'focal_length_mm': 85.0,
             'battery_capacity_wh': 1.5,
-            'solar_generation_mw': 1000.0, 
+            'solar_generation_mw': 800.0, 
         })
         return cfg
 
@@ -432,7 +432,8 @@ class ContinuousSatSim:
         
         plot_delivered_yield(logs, naive_states, case_name, self.output_dir,
                             plot_accuracy_baseline=True,
-                            plot_fastest_baseline=True
+                            plot_fastest_baseline=True,
+                            plot_cheapest_baseline=True
         )
         ## Some one-off plots for motivation and whatnot :)
         # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)

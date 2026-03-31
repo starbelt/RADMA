@@ -68,9 +68,9 @@ def load_orbit_data(data_path, sat_prefix, num_orbits):
 
                 t_new_start = first_sun_start
 
-            dfnew = df[df['Time (EpSec)'] >= t_new_start].copy()
+            df = df[df['Time (EpSec)'] >= t_new_start].copy()
             
-            dfnew['Time (EpSec)'] = df['Time (EpSec)'] - t_new_start
+            df['Time (EpSec)'] = df['Time (EpSec)'] - t_new_start
             
             shifted_intervals = []
             for s, e in sunlight_intervals:
