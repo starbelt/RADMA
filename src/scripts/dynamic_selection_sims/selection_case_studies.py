@@ -44,7 +44,7 @@ class ContinuousSatSim:
         'compute_enable_pct': 0.65,
         'compute_disable_pct': 0.45,
         
-        'budget_horizon_frames': 1000.0,
+        'budget_horizon_frames': 3,
         'eclipse_illumination_pct': 0.05, 
         
         'hard_min_infs': 0.0,
@@ -131,13 +131,12 @@ class ContinuousSatSim:
                 if e['start'] <= t_rel < (e['start'] + e['duration']):
                     disturb_power_w += e.get('power_w', 0.0)
                     extra_demand_ips += e.get('extra_demand_ips', 0.0)
-                    solar_scale *= e.get('solar_scale', 1.0)  # <--- NEW: Apply scaling factor
+                    solar_scale *= e.get('solar_scale', 1.0) 
                     if e.get('blocked', False): cpu_blocked = True
 
         eclipse_pct = cfg.get('eclipse_illumination_pct', 0.0)
         effective_light = row['is_lit'] + (1.0 - row['is_lit']) * eclipse_pct
         
-
         solar_w = (cfg['solar_generation_mw'] / 1000.0) * effective_light * solar_scale
         base_w = (cfg['system_baseload_mw'] / 1000.0) + disturb_power_w
         env_energy_j = (solar_w - base_w) * dt 
@@ -147,23 +146,32 @@ class ContinuousSatSim:
         phase_end_time = row['phase_end_time']
         t_rem = max(dt, phase_end_time - t_abs)
         
+        safe_disable_j = limit_disable_j * 1.02
+        
         if row['is_lit'] > 0.5:
             upcoming_eclipse_s = row['next_eclipse_duration_s']
-            eclipse_survival_j = limit_disable_j + (base_w * upcoming_eclipse_s)
+            eclipse_survival_j = safe_disable_j + (base_w * upcoming_eclipse_s)
             
             target_j = max(limit_enable_j, eclipse_survival_j)
             
             battery_cap_j = cfg['battery_capacity_wh'] * 3600.0
             target_j = min(target_j, battery_cap_j * 0.95)
         else:
-            target_j = limit_disable_j * 1.02
+            target_j = safe_disable_j
             
         net_power_w = solar_w - base_w
         expected_end_battery_j = current_battery_j + (net_power_w * t_rem)
         usable_surplus_j = expected_end_battery_j - target_j
         
+        # --- BUG FIX 2: Bounded Planning Horizon ---
+        # Prevent "horizon collapse" (splurging when t_rem -> 0) by enforcing a minimum 
+        # time constant for spending the surplus energy. We'll utilize the budget_horizon 
+        # already defined in your BASE_SYSTEM config.
+        budget_horizon_s = cfg.get('budget_horizon_frames', 1) * dt
+        planning_horizon_s = max(budget_horizon_s, t_rem)
+        
         if usable_surplus_j > 0:
-            step_energy_budget_j = (usable_surplus_j / t_rem) * dt
+            step_energy_budget_j = (usable_surplus_j / planning_horizon_s) * dt
         else:
             step_energy_budget_j = 0.0
             
