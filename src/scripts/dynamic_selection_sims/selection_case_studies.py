@@ -108,17 +108,16 @@ class ContinuousSatSim:
         max_eng_infs = energy_budget_j / viable_models['eng_j']
         
         infs_possible = np.minimum(max_time_infs, max_eng_infs)
-        clearing_mask = infs_possible >= total_inferences
+        usable_infs = np.minimum(infs_possible, total_inferences)
         
-        if clearing_mask.any():
-            capable_models = viable_models[clearing_mask].copy()
-            best_idx = capable_models['acc_decimal'].idxmax()
-            return capable_models.loc[best_idx], "clears_frame"
-        else:
-            expected_correct = infs_possible * viable_models['acc_decimal']
-            best_idx = expected_correct.idxmax()
-            best_model = viable_models.loc[best_idx]
-            return best_model, "partial_frame"
+        expected_correct = usable_infs * viable_models['acc_decimal']
+        
+        best_idx = expected_correct.idxmax()
+        best_model = viable_models.loc[best_idx]
+        
+        reason = "clears_frame" if infs_possible[best_idx] >= total_inferences else "partial_frame"
+        
+        return best_model, reason
         
 
     def _get_step_conditions(self, t_rel, t_abs, dt, row, cfg, events, current_battery_j, limit_disable_j, limit_enable_j):
@@ -433,7 +432,7 @@ class ContinuousSatSim:
         
         plot_delivered_yield(logs, naive_states, case_name, self.output_dir,
                             plot_accuracy_baseline=True,
-                            plot_cheapest_baseline=True
+                            plot_fastest_baseline=True
         )
         ## Some one-off plots for motivation and whatnot :)
         # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
