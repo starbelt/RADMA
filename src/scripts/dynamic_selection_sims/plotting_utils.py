@@ -639,6 +639,170 @@ def plot_mission(logs, naive_states, case_name, cfg, output_dir,
     plt.savefig(save_path, format='pdf', bbox_inches='tight')
     plt.close()
 
+def plot_delivered_yield(logs, naive_states, case_name, output_dir, 
+                        plot_accuracy_baseline=False, 
+                        plot_efficiency_baseline=False, 
+                        plot_throughput_baseline=False,
+                        plot_true_naive_baseline=False,
+                        plot_cheapest_baseline=False,
+                        plot_fastest_baseline=False):
+    """
+    Plots the instantaneous correct inferences delivered versus the ideal demand.
+    Shows the actual accuracy-adjusted productivity of the system over time.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+
+    # Enforce global serif font layout for native LaTeX integration
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix"
+    })
+
+    set_plot_style()
+    t_plot = np.array(logs['time_rel'])
+    demand = np.array(logs['demand_infs'])
+
+    # Standard single-column sizing
+    fig, ax = plt.subplots(figsize=(3.5, 3.5))
+
+    baseline_colors = {
+        'True_Naive': 'tab:gray',
+        'High_Accuracy': 'tab:blue',
+        'High_Throughput': 'tab:green',
+        'High_Efficiency': 'tab:yellow',
+        'Cheapest': 'tab:purple',
+        'Fastest': 'tab:red'
+    }
+
+    handles_base = []
+    labels_base = []
+
+    # 1. Plot Ideal Demand (The Envelope)
+    # This represents 100% accuracy on all demanded inferences
+    fill_ideal = ax.fill_between(t_plot, 0, demand, color='tab:gray', alpha=0.10, label='Ideal Yield (Demand)')
+    line_ideal, = ax.plot(t_plot, demand, color='black', linestyle=':', linewidth=1.0, alpha=0.5, label='Demand Envelope')
+
+    # Helper function to extract step-by-step correct inferences from cumulative logs
+    def get_baseline_step_yield(ns):
+        cum = np.array(ns['logs_cum_correct'])
+        # Prepend the first value so the array length matches t_plot after differencing
+        return np.concatenate(([cum[0]], np.diff(cum)))
+
+    # --- Static Baselines (Togglable) ---
+    if plot_true_naive_baseline and 'True_Naive' in naive_states:
+        step_yield = get_baseline_step_yield(naive_states['True_Naive'])
+        line, = ax.plot(t_plot, step_yield, color=baseline_colors['True_Naive'],
+                alpha=0.8, linewidth=1.0, label='True Naive')
+        handles_base.append(line)
+        labels_base.append('True Naive')
+
+    if plot_accuracy_baseline and 'High_Accuracy' in naive_states:
+        step_yield = get_baseline_step_yield(naive_states['High_Accuracy'])
+        line, = ax.plot(t_plot, step_yield, color=baseline_colors['High_Accuracy'],
+                alpha=0.8, linewidth=1.0, label='High Accuracy')
+        handles_base.append(line)
+        labels_base.append('High Accuracy')
+        
+    if plot_throughput_baseline and 'High_Throughput' in naive_states:
+        step_yield = get_baseline_step_yield(naive_states['High_Throughput'])
+        line, = ax.plot(t_plot, step_yield, color=baseline_colors['High_Throughput'],
+                alpha=0.8, linewidth=1.0, label='High Throughput')
+        handles_base.append(line)
+        labels_base.append('High Throughput')
+        
+    if plot_efficiency_baseline and 'High_Efficiency' in naive_states:
+        step_yield = get_baseline_step_yield(naive_states['High_Efficiency'])
+        line, = ax.plot(t_plot, step_yield, color=baseline_colors['High_Efficiency'],
+                alpha=0.8, linewidth=1.0, label='High Efficiency')
+        handles_base.append(line)
+        labels_base.append('High Efficiency')
+    
+    if plot_cheapest_baseline and 'Cheapest' in naive_states:
+        step_yield = get_baseline_step_yield(naive_states['Cheapest'])
+        line, = ax.plot(t_plot, step_yield, color=baseline_colors['Cheapest'],
+                linestyle='--', alpha=0.8, linewidth=1.0, label='Maximum inf/J')
+        handles_base.append(line)
+        labels_base.append('Maximum inf/J')
+    
+    if plot_fastest_baseline and 'Fastest' in naive_states:
+        step_yield = get_baseline_step_yield(naive_states['Fastest'])
+        line, = ax.plot(t_plot, step_yield, color=baseline_colors['Fastest'],
+                linestyle='--', alpha=0.8, linewidth=1.0, label='Maximum inf/s')
+        handles_base.append(line)
+        labels_base.append('Maximum inf/s')
+
+    # --- Dynamic System (RADMA) --- 
+    # Handle NaNs in accuracy where processed infs were 0
+    throughput = np.array(logs['throughput_infs'])
+    accuracy = np.nan_to_num(np.array(logs['avg_accuracy']), nan=0.0)
+    dynamic_yield = throughput * accuracy
+    
+    # Generate the color mapping and plot the segmented dynamic line
+    color_dict = _get_model_colors(logs['model_name'])
+    handles_dyn, labels_dyn = _plot_segmented_line(
+        ax, t_plot, dynamic_yield, logs['model_name'], color_dict, ylabel='Correct Inferences / Step'
+    )
+
+    # Formatting overrides
+    ax.set_xlabel('Mission Time (s)', fontsize=10)
+    ax.tick_params(axis='both', labelsize=8)
+
+    ax.grid(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    # --- Dual Legend Construction ---
+    all_raw_handles = handles_dyn + handles_base + [line_ideal, fill_ideal]
+    all_raw_labels = labels_dyn + labels_base + ['Demand Envelope', 'Ideal Yield']
+    
+    unique_labels = []
+    unique_handles = []
+    
+    # Deduplicate legend items
+    for h, l in zip(all_raw_handles, all_raw_labels):
+        if l not in unique_labels:
+            unique_labels.append(l)
+            unique_handles.append(h)
+
+    system_names = ['Demand Envelope', 'Ideal Yield']
+    sys_group, model_group, baseline_group = [], [], []
+    
+    for h, l in zip(unique_handles, unique_labels):
+        if l in system_names:
+            sys_group.append((h, l))
+        elif l in labels_base:
+            baseline_group.append((h, l))
+        else:
+            model_group.append((h, l))
+            
+    sys_group.sort(key=lambda x: system_names.index(x[1])) 
+    
+    # 1. System Legend (Inside Upper Right, to stay out of the way of the low valleys)
+    sys_handles = [x[0] for x in sys_group]
+    sys_labels = [x[1] for x in sys_group]
+    
+    sys_legend = ax.legend(sys_handles, sys_labels, loc='upper right', 
+                        frameon=True, framealpha=0.9, edgecolor='none', fontsize=8)
+    ax.add_artist(sys_legend)
+    
+    # 2. Models & Baselines Legend (Outside Bottom)
+    bottom_items = model_group + baseline_group
+    bottom_handles = [x[0] for x in bottom_items]
+    bottom_labels = [x[1] for x in bottom_items]
+    
+    ax.legend(bottom_handles, bottom_labels, loc='upper center', bbox_to_anchor=(0.5, -0.22), 
+            ncol=2, frameon=False, fontsize=8)
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.40) # Make room for the legend underneath
+
+    save_path = Path(output_dir) / f"{case_name}_delivered_yield.pdf"
+    plt.savefig(save_path, format='pdf', bbox_inches='tight')
+    plt.close()
+
 def plot_orbit_dynamics(logs, case_name, output_dir):
     set_plot_style()
     clean_name = case_name.replace('_', ' ')

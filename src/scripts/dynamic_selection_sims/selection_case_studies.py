@@ -430,6 +430,11 @@ class ContinuousSatSim:
         plot_energy_margin(logs, naive_states, case_name, self.output_dir,
                             plot_accuracy_baseline=True,
                             plot_cheapest_baseline=True)
+        
+        plot_delivered_yield(logs, naive_states, case_name, self.output_dir,
+                            plot_accuracy_baseline=True,
+                            plot_cheapest_baseline=True
+        )
         ## Some one-off plots for motivation and whatnot :)
         # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         #plot_single(logs, case_name, self.output_dir)
