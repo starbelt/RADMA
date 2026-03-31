@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 def set_plot_style():
     plt.rcdefaults()  # reset any cached state before applying overrides
@@ -650,9 +651,6 @@ def plot_delivered_yield(logs, naive_states, case_name, output_dir,
     Plots the instantaneous correct inferences delivered versus the ideal demand.
     Shows the actual accuracy-adjusted productivity of the system over time.
     """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from pathlib import Path
 
     # Enforce global serif font layout for native LaTeX integration
     plt.rcParams.update({
@@ -795,6 +793,8 @@ def plot_delivered_yield(logs, naive_states, case_name, output_dir,
     
     ax.legend(bottom_handles, bottom_labels, loc='upper center', bbox_to_anchor=(0.5, -0.22), 
             ncol=2, frameon=False, fontsize=8)
+    
+    ax.set_xlim(4300,10200)
 
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.40) # Make room for the legend underneath

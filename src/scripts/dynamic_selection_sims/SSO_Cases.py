@@ -26,7 +26,8 @@ if __name__ == "__main__":
     orbit_path = ROOT_DIR / "data/stk"
     out_dir = ROOT_DIR / "results/case_studies/sso"
 
-    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=5)
+    sim_sso = ContinuousSatSim(orbit_path, model_json, out_dir, sat_prefix='SSO', num_orbits=3
+    )
     sso_cfg = ContinuousSatSim.get_sso_config()
 
     sim_sso.run_case_study("SSO_01_Baseline", config_overrides=sso_cfg, events=None)
