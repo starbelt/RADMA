@@ -5,8 +5,8 @@ if (NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE ${CMAKE_CURRENT_LIST_DIR}/coralmicro/cmake/toolchain-arm-none-eabi-gcc.cmake)
 endif()
 
-if (NOT DEFINED MODEL_PATH)
-    message(FATAL_ERROR "MODEL_PATH not set! Pass -DMODEL_PATH=...")
+if (NOT DEFINED MODEL_PATH_1 OR NOT DEFINED MODEL_PATH_2)
+    message(FATAL_ERROR "Model paths not set! Pass -DMODEL_PATH_1=... and -DMODEL_PATH_2=...")
 endif()
 
 project(Coral-TPU-Characterization)
@@ -17,16 +17,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 include_directories(coralmicro)
 include_directories(${CMAKE_CURRENT_LIST_DIR}/src/libs)
 
-
 add_subdirectory(coralmicro)
 
 add_executable_m7(coralmicro-app
-        inference_time_combined.cc
+        main.cc
         DATA
-        ${MODEL_PATH}
+        ${MODEL_PATH_1}
+        ${MODEL_PATH_2}
 )
 
 target_link_libraries(coralmicro-app
         libs_base-m7_freertos
 )
-
