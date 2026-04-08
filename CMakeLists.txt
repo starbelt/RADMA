@@ -22,8 +22,8 @@ add_subdirectory(coralmicro)
 add_executable_m7(coralmicro-app
         main.cc
         DATA
-        ${MODEL_PATH_1}
-        ${MODEL_PATH_2}
+        "data/models/coral_target/Grid_A0.25_D02_quant_edgetpu.tflite"
+        "data/models/coral_target/Grid_A0.25_D04_quant_edgetpu.tflite"
 )
 
 target_link_libraries(coralmicro-app

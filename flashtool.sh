@@ -31,7 +31,7 @@ if [ "$DO_BUILD" = true ]; then
     make -C out -j"$JOBS" || { echo "ERROR: Make build failed."; exit 1; }
 
     echo "=== Staging Flashtool Dependencies ==="
-    # We MUST point flashtool to 'out' so it can read CMake's target data
+    # MUST point flashtool to 'out' so it can read CMake's target data
     # and properly build the LittleFS filesystem.
     find out/coralmicro_build -type f -name "elf_loader" -exec cp {} out/ \; || echo "Warning: elf_loader not found."
     find out/coralmicro_build -type f -name "flashloader" -exec cp {} out/ \; 2>/dev/null || true
@@ -53,7 +53,6 @@ if [ "$DO_FLASH" = true ]; then
         FLASHTOOL_ARGS="$FLASHTOOL_ARGS --nodata"
     fi
 
-    # Update this path to wherever your flashtool.py lives
     python3 ../../../third-party/coralmicro/scripts/flashtool.py $FLASHTOOL_ARGS || { echo "ERROR: Flashing failed."; exit 1; }
 else
     echo "=== Skipping Flash (No-Flash Flag Detected) ==="
