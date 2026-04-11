@@ -1,7 +1,7 @@
 #include <vector>
 #include <cstdio>
 
-#include "src/libs/inference_model_config.h"
+#include "inference_model_config.h"
 #include "coralmicro/libs/base/filesystem.h"
 #include "coralmicro/libs/base/led.h"
 #include "coralmicro/libs/tpu/edgetpu_manager.h"
