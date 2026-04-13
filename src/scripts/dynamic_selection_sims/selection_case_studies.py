@@ -380,6 +380,15 @@ class ContinuousSatSim:
         t_start = sim_data['Time (EpSec)'].iloc[0]
         dynamic_recharging = False
 
+        frame_budgets = []
+        
+        # Calculate tiles per frame (e.g., ceil(4096 / 224)^2 = 361 tiles per frame)
+        tiles_per_frame = np.ceil(cfg['sensor_res'] / cfg['tpu_dim'])**2 
+        
+        tile_accumulator = 0.0
+        time_accumulator = 0.0
+        energy_accumulator = 0.0
+
         for i, row in sim_data.iterrows():
             t_rel = row['Time (EpSec)'] - t_start
             t_abs = row['Time (EpSec)']
@@ -390,6 +399,25 @@ class ContinuousSatSim:
                 t_rel, t_abs, dt, row, cfg, events, current_battery_j, limit_disable_j, limit_enable_j
             )
             report_stats['total_demand_infs'] += infs_for_sec
+
+            if infs_for_sec > 0:
+                tile_accumulator += infs_for_sec
+                time_accumulator += dt
+                energy_accumulator += step_budget_j
+                
+                # Whenever we have enough tiles for a full frame, cash it out
+                while tile_accumulator >= tiles_per_frame:
+                    fraction = tiles_per_frame / tile_accumulator
+                    
+                    frame_time_budget = time_accumulator * fraction
+                    frame_energy_budget = energy_accumulator * fraction
+                    
+                    frame_budgets.append((frame_time_budget, frame_energy_budget))
+                    
+                    # Subtract the processed frame from the accumulators
+                    tile_accumulator -= tiles_per_frame
+                    time_accumulator -= frame_time_budget
+                    energy_accumulator -= frame_energy_budget
 
             if current_battery_j < limit_disable_j:
                 dynamic_recharging = True
@@ -459,6 +487,12 @@ class ContinuousSatSim:
         # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         #plot_single(logs, case_name, self.output_dir)
         plot_static_failure_motivation(logs, naive_states, case_name, cfg, self.output_dir)
+
+        if frame_budgets:
+            budget_df = pd.DataFrame(frame_budgets, columns=['Frame_Time_Budget_s', 'Frame_Energy_Budget_j'])
+            csv_path = self.output_dir / f"{case_name}_frame_budgets.csv"
+            budget_df.to_csv(csv_path, index=False)
+            print(f"Exported exactly {len(budget_df)} frame budgets to: {csv_path}")
 
         return logs
 

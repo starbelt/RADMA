@@ -1,0 +1,338 @@
+[
+    {
+        "Model name":"EfficientNet-EdgeTpu (M)",
+        "Measured Inference Time (ms)":54.9538801779,
+        "Energy per Inference (mJ)":49.5371717465,
+        "Top-1 Accuracy":77.1,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"EfficientNet-EdgeTpu (S)",
+        "Measured Inference Time (ms)":20.1354069125,
+        "Energy per Inference (mJ)":20.6962606095,
+        "Top-1 Accuracy":75.2,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"Inception V1",
+        "Measured Inference Time (ms)":33.1726353777,
+        "Energy per Inference (mJ)":26.6839967061,
+        "Top-1 Accuracy":67.9,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"Inception V2",
+        "Measured Inference Time (ms)":213.7306801343,
+        "Energy per Inference (mJ)":144.9393592036,
+        "Top-1 Accuracy":71.6,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"MobileNet V1 (0.25)",
+        "Measured Inference Time (ms)":8.6191641285,
+        "Energy per Inference (mJ)":5.6190504238,
+        "Top-1 Accuracy":36.4,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"MobileNet V1 (0.50)",
+        "Measured Inference Time (ms)":11.4598122339,
+        "Energy per Inference (mJ)":7.657985243,
+        "Top-1 Accuracy":54.1,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"MobileNet V1 (.75)",
+        "Measured Inference Time (ms)":13.0160821396,
+        "Energy per Inference (mJ)":9.3319979504,
+        "Top-1 Accuracy":62.9,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"MobileNet V1 (1.0)",
+        "Measured Inference Time (ms)":15.0473611977,
+        "Energy per Inference (mJ)":11.3738600582,
+        "Top-1 Accuracy":66.3,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"MobileNet V1 (TF_ver_2.0)",
+        "Measured Inference Time (ms)":17.1138411473,
+        "Energy per Inference (mJ)":13.3663552068,
+        "Top-1 Accuracy":66.3,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"MobileNet V2",
+        "Measured Inference Time (ms)":18.4616643583,
+        "Energy per Inference (mJ)":13.4833981581,
+        "Top-1 Accuracy":68.7,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"MobileNet V2 (TF_ver_2.0)",
+        "Measured Inference Time (ms)":18.6171336396,
+        "Energy per Inference (mJ)":13.0866713728,
+        "Top-1 Accuracy":69.6,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"MobileNet V3",
+        "Measured Inference Time (ms)":19.0178472471,
+        "Energy per Inference (mJ)":15.2283144858,
+        "Top-1 Accuracy":73.7,
+        "Source":"PreTrained"
+    },
+    {
+        "Model name":"Grid A0.25 D02",
+        "Measured Inference Time (ms)":9.8668323911,
+        "Energy per Inference (mJ)":7.9753382215,
+        "Top-1 Accuracy":34.1827003709,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.25 D04",
+        "Measured Inference Time (ms)":10.3984307764,
+        "Energy per Inference (mJ)":8.1933083778,
+        "Top-1 Accuracy":32.3776166498,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.25 D06",
+        "Measured Inference Time (ms)":10.8926614276,
+        "Energy per Inference (mJ)":8.7263923027,
+        "Top-1 Accuracy":36.5174521329,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.25 D08",
+        "Measured Inference Time (ms)":11.3700007518,
+        "Energy per Inference (mJ)":9.0668673657,
+        "Top-1 Accuracy":36.0595506012,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.25 D10",
+        "Measured Inference Time (ms)":11.8856965691,
+        "Energy per Inference (mJ)":9.0574802365,
+        "Top-1 Accuracy":36.4683076755,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.25 D12",
+        "Measured Inference Time (ms)":12.3791119165,
+        "Energy per Inference (mJ)":10.4074733569,
+        "Top-1 Accuracy":35.7346511329,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.5 D02",
+        "Measured Inference Time (ms)":10.5569273791,
+        "Energy per Inference (mJ)":8.3219699354,
+        "Top-1 Accuracy":44.0357740447,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.5 D04",
+        "Measured Inference Time (ms)":11.1740428435,
+        "Energy per Inference (mJ)":8.8723145427,
+        "Top-1 Accuracy":46.7734323503,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.5 D06",
+        "Measured Inference Time (ms)":11.7427358675,
+        "Energy per Inference (mJ)":9.5460592215,
+        "Top-1 Accuracy":45.4250800548,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.5 D08",
+        "Measured Inference Time (ms)":12.3657940888,
+        "Energy per Inference (mJ)":10.3290877307,
+        "Top-1 Accuracy":47.1326549318,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.5 D10",
+        "Measured Inference Time (ms)":12.9489780046,
+        "Energy per Inference (mJ)":10.7017140847,
+        "Top-1 Accuracy":46.4590638371,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.5 D12",
+        "Measured Inference Time (ms)":13.5096140157,
+        "Energy per Inference (mJ)":11.9914176122,
+        "Top-1 Accuracy":47.0039432577,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.75 D02",
+        "Measured Inference Time (ms)":11.3206430658,
+        "Energy per Inference (mJ)":9.7816384911,
+        "Top-1 Accuracy":48.7864049269,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.75 D04",
+        "Measured Inference Time (ms)":12.0460136612,
+        "Energy per Inference (mJ)":10.3035722721,
+        "Top-1 Accuracy":49.9584612324,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.75 D06",
+        "Measured Inference Time (ms)":12.7000430923,
+        "Energy per Inference (mJ)":11.2285492412,
+        "Top-1 Accuracy":50.3247044507,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.75 D08",
+        "Measured Inference Time (ms)":13.4150338791,
+        "Energy per Inference (mJ)":12.381516341,
+        "Top-1 Accuracy":51.5033913576,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.75 D10",
+        "Measured Inference Time (ms)":14.1001470773,
+        "Energy per Inference (mJ)":12.838604626,
+        "Top-1 Accuracy":50.4818887073,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A0.75 D12",
+        "Measured Inference Time (ms)":14.781084671,
+        "Energy per Inference (mJ)":13.8573473842,
+        "Top-1 Accuracy":50.9062471966,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.0 D02",
+        "Measured Inference Time (ms)":12.2321654649,
+        "Energy per Inference (mJ)":10.8906797075,
+        "Top-1 Accuracy":50.6464836361,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.0 D04",
+        "Measured Inference Time (ms)":13.0619770847,
+        "Energy per Inference (mJ)":12.1607267527,
+        "Top-1 Accuracy":52.7850476038,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.0 D06",
+        "Measured Inference Time (ms)":13.9099017681,
+        "Energy per Inference (mJ)":13.4152364166,
+        "Top-1 Accuracy":53.717232153,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.0 D08",
+        "Measured Inference Time (ms)":14.7405525945,
+        "Energy per Inference (mJ)":14.1623869898,
+        "Top-1 Accuracy":53.3872622247,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.0 D10",
+        "Measured Inference Time (ms)":15.5850570759,
+        "Energy per Inference (mJ)":15.0863577003,
+        "Top-1 Accuracy":52.3517183008,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.0 D12",
+        "Measured Inference Time (ms)":16.450331278,
+        "Energy per Inference (mJ)":16.8669322558,
+        "Top-1 Accuracy":53.1204780274,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.25 D02",
+        "Measured Inference Time (ms)":12.666049997,
+        "Energy per Inference (mJ)":12.3333655368,
+        "Top-1 Accuracy":51.916438821,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.25 D04",
+        "Measured Inference Time (ms)":13.662834162,
+        "Energy per Inference (mJ)":13.7663430372,
+        "Top-1 Accuracy":53.5058329791,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.25 D06",
+        "Measured Inference Time (ms)":14.6221781332,
+        "Energy per Inference (mJ)":15.2992234477,
+        "Top-1 Accuracy":54.723913459,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.25 D08",
+        "Measured Inference Time (ms)":15.6588216923,
+        "Energy per Inference (mJ)":16.3142469719,
+        "Top-1 Accuracy":54.4508886956,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.25 D10",
+        "Measured Inference Time (ms)":43.2228294824,
+        "Energy per Inference (mJ)":38.6850790663,
+        "Top-1 Accuracy":54.3100859248,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.25 D12",
+        "Measured Inference Time (ms)":75.2953278689,
+        "Energy per Inference (mJ)":66.3130964887,
+        "Top-1 Accuracy":53.9442327419,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.5 D02",
+        "Measured Inference Time (ms)":13.4214003374,
+        "Energy per Inference (mJ)":13.1371866788,
+        "Top-1 Accuracy":53.762866292,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.5 D04",
+        "Measured Inference Time (ms)":30.9004562861,
+        "Energy per Inference (mJ)":28.469618694,
+        "Top-1 Accuracy":54.5051036129,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.5 D06",
+        "Measured Inference Time (ms)":75.7001205852,
+        "Energy per Inference (mJ)":59.4047944309,
+        "Top-1 Accuracy":55.4205166409,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.5 D08",
+        "Measured Inference Time (ms)":120.885804887,
+        "Energy per Inference (mJ)":92.8045072696,
+        "Top-1 Accuracy":55.5632695886,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.5 D10",
+        "Measured Inference Time (ms)":166.6873565089,
+        "Energy per Inference (mJ)":134.1166140066,
+        "Top-1 Accuracy":55.7044623947,
+        "Source":"Custom"
+    },
+    {
+        "Model name":"Grid A1.5 D12",
+        "Measured Inference Time (ms)":212.4299726119,
+        "Energy per Inference (mJ)":169.3062593839,
+        "Top-1 Accuracy":55.2574818536,
+        "Source":"Custom"
+    }
+]
