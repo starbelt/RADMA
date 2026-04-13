@@ -22,8 +22,8 @@ namespace coralmicro
   namespace
   {
 
-    constexpr char kModelPath1[] = MODEL_PATH_1;
-    constexpr char kModelPath2[] = MODEL_PATH_2;
+    constexpr char kModelPath1[] = MODEL_PATH_A075_D02;
+    constexpr char kModelPath2[] = MODEL_PATH_A075_D04;
 
     // Tensor arena (preallocated in SDRAM)
     constexpr int kTensorArenaSize = 8 * 1024 * 1024;

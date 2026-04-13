@@ -28,11 +28,7 @@ if [ "$DO_BUILD" = true ]; then
     cd src
     
     echo "=== Configuring CMake ==="
-    MODEL_PATH_1="${REPO_ROOT}/data/models/coral_target/Grid_A0.25_D02_quant_edgetpu.tflite"
-    MODEL_PATH_2="${REPO_ROOT}/data/models/coral_target/Grid_A0.25_D04_quant_edgetpu.tflite"
     cmake -B out -S . \
-        -DMODEL_PATH_1="$MODEL_PATH_1" \
-        -DMODEL_PATH_2="$MODEL_PATH_2" \
         || { echo "ERROR: CMake configuration failed."; exit 1; }
 
     echo "=== Building Project ==="
@@ -50,7 +46,10 @@ fi
 
 
 if [ "$DO_FLASH" = true ]; then
-    cd src
+    if [ "$DO_BUILD" = false ]; then
+        cd src
+    fi
+
     echo "=== Flashing to Board ==="
     
     # Base arguments for flashtool
