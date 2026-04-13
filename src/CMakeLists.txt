@@ -18,6 +18,7 @@ add_subdirectory(../coralmicro coralmicro_build)
 
 add_executable_m7(coralmicro-app
         main.cc
+        libs/radma_scheduler.cc
         DATA
         # Alpha = 0.25
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.25_D02_quant_edgetpu.tflite"

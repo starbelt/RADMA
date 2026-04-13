@@ -2,12 +2,14 @@
 #include <cstdio>
 
 #include "inference_model_config.h"
+#include "radma_data.h"
+#include "radma_scheduler.h"
 #include "coralmicro/libs/base/filesystem.h"
 #include "coralmicro/libs/base/led.h"
 #include "coralmicro/libs/tpu/edgetpu_manager.h"
 #include "coralmicro/libs/tpu/edgetpu_op.h"
 #include "coralmicro/libs/base/gpio.h"
-#include "coralmicro/libs/base/console_m7.h" // Added Console M7 header
+#include "coralmicro/libs/base/console_m7.h"
 
 #include "coralmicro/third_party/freertos_kernel/include/FreeRTOS.h"
 #include "coralmicro/third_party/freertos_kernel/include/task.h"
@@ -21,149 +23,189 @@ namespace coralmicro
 {
   namespace
   {
-
-    constexpr char kModelPath1[] = MODEL_PATH_A075_D02;
-    constexpr char kModelPath2[] = MODEL_PATH_A075_D04;
-
     // Tensor arena (preallocated in SDRAM)
     constexpr int kTensorArenaSize = 8 * 1024 * 1024;
     STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
     TaskHandle_t h = nullptr;
 
-    // Inference task
+    // ------------------------------------------------------------------
+    // RunFrame
+    // Loads the cached model data into the interpreter, runs exactly
+    // `n_inferences` invocations, and prints per-invoke timing.
+    // Returns the total accumulated inference time.
+    // ------------------------------------------------------------------
+    float RunFrame(const ModelProfile &profile,
+                   const std::vector<uint8_t> &model_data,
+                   int n_inferences,
+                   tflite::MicroErrorReporter &error_reporter,
+                   tflite::MicroMutableOpResolver<3> &resolver)
+    {
+      printf("\r\n--- Frame: model=%s  n=%d ---\r\n",
+             profile.name, n_inferences);
+
+      // Scoped interpreter — freed on exit so tensor arena can be cleanly reused
+      {
+        tflite::MicroInterpreter interpreter(
+            tflite::GetModel(model_data.data()), resolver,
+            tensor_arena, kTensorArenaSize, &error_reporter);
+
+        if (interpreter.AllocateTensors() != kTfLiteOk)
+        {
+          printf("ERROR: AllocateTensors() failed\r\n");
+          return 0.0f;
+        }
+
+        // Static grey input (127) — identical to the old harness
+        auto *input_tensor = interpreter.input_tensor(0);
+        std::vector<uint8_t> static_image(input_tensor->bytes, 127);
+        memcpy(input_tensor->data.uint8, static_image.data(), input_tensor->bytes);
+
+        float total_ms = 0.0f;
+
+#if defined(SystemCoreClock)
+        const double cpu_hz = static_cast<double>(SystemCoreClock);
+#else
+        const double cpu_hz = 800e6;
+#endif
+
+        for (int tile = 0; tile < n_inferences; ++tile)
+        {
+          GpioSet(kUartCts, true);
+          __DSB();
+          __ISB();
+          const uint32_t t0 = DWT->CYCCNT;
+
+          if (interpreter.Invoke() != kTfLiteOk)
+          {
+            printf("ERROR: Invoke() failed on tile %d\r\n", tile);
+            break;
+          }
+
+          const uint32_t t1 = DWT->CYCCNT;
+          GpioSet(kUartCts, false);
+          __DSB();
+          __ISB();
+
+          const double ms = static_cast<double>(t1 - t0) / (cpu_hz / 1000.0);
+          total_ms += static_cast<float>(ms);
+          printf("  tile %2d / %2d  invoke_ms=%.3f\r\n", tile + 1, n_inferences, ms);
+        }
+
+        printf("  frame_total_ms=%.3f  expected_correct=%.2f\r\n",
+               total_ms, static_cast<float>(n_inferences) * profile.accuracy);
+
+        return total_ms;
+
+      } // interpreter destroyed here — tensor arena freed
+    }
+
+    // ------------------------------------------------------------------
+    // InferenceTask
+    // Iterates through every scenario in kSimulationScenario, asks the
+    // scheduler which model to use, handles flash I/O caching, and runs.
+    // ------------------------------------------------------------------
     [[noreturn]] void InferenceTask(void *pvParameters)
     {
       LedSet(Led::kStatus, true);
-      printf("Starting Inference Task\r\n");
+      printf("Starting RADMA Inference Task\r\n");
+      printf("  %d models available,  %d tiles/frame\r\n",
+             kNumModels, kNumTiles);
 
-      // Setup GPIO pin for timing
+      // GPIO for external timing probe
       GpioSetMode(kUartCts, GpioMode::kOutput);
       GpioSet(kUartCts, false);
       __DSB();
       __ISB();
 
-      // Enable DWT cycle counter (do this once)
+      // DWT cycle counter for high-resolution timing
       CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
       DWT->CYCCNT = 0;
       DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
-      // Open TPU Context once. It remains open across model swaps.
+      // Open TPU context once — kept alive for the lifetime of the task
       auto tpu_context = EdgeTpuManager::GetSingleton()->OpenDevice();
       if (!tpu_context)
       {
-        printf("ERROR: Failed to get EdgeTpu context\r\n");
+        printf("ERROR: Failed to open EdgeTpu context\r\n");
         LedSet(Led::kStatus, false);
         vTaskSuspend(nullptr);
       }
 
-      // Setup error reporter and resolver once
       tflite::MicroErrorReporter error_reporter;
       tflite::MicroMutableOpResolver<3> resolver;
       resolver.AddDequantize();
       resolver.AddDetectionPostprocess();
       resolver.AddCustom(kCustomOp, RegisterCustomOp());
 
-      char active_model_char = '1';
+      // --- State tracking for model caching ---
+      std::vector<uint8_t> cached_model_data;
+      int current_model_idx = -1;
 
-      // --- OUTER LOOP: Handles Model Loading & Interpreter Setup ---
+      // ----------------------------------------------------------------
+      // Main demo loop — cycle through the simulation scenario table
+      // ----------------------------------------------------------------
       for (;;)
       {
-        const char *active_model_path = (active_model_char == '1') ? kModelPath1 : kModelPath2;
-        printf("\r\nLoading model: %s\r\n", active_model_path);
-
-        // Load model into vector
-        std::vector<uint8_t> model;
-        if (!LfsReadFile(active_model_path, &model))
+        for (int frame = 0; frame < kNumFrames; ++frame)
         {
-          printf("ERROR: Failed to load %s\r\n", active_model_path);
-          vTaskSuspend(nullptr);
-        }
+          const FrameBudget &budget = kSimulationScenario[frame];
 
-        // --- SCOPED BLOCK: Interpreter Lifetime ---
-        // The interpreter will be destroyed automatically when we break out of this block
-        {
-          tflite::MicroInterpreter interpreter(
-              tflite::GetModel(model.data()), resolver, tensor_arena, kTensorArenaSize,
-              &error_reporter);
+          printf("\r\n========================================\r\n");
+          printf("Frame %d  budget: time=%.1f ms  energy=%.1f mJ\r\n",
+                 frame, budget.time_budget_ms, budget.energy_budget_mj);
 
-          if (interpreter.AllocateTensors() != kTfLiteOk)
+          // Ask the scheduler which model maximises correct inferences
+          const int idx = RadmaScheduler::SelectOptimalModel(
+              budget, kAvailableModels, kNumModels);
+
+          if (idx < 0)
           {
-            printf("ERROR: AllocateTensors() failed\r\n");
-            LedSet(Led::kStatus, false);
-            vTaskSuspend(nullptr);
+            printf("WARNING: No model fits this budget — skipping frame.\r\n");
+            continue;
           }
 
-          // Fill a static input
-          auto *input_tensor = interpreter.input_tensor(0);
-          std::vector<uint8_t> static_image(input_tensor->bytes, 127);
-          memcpy(input_tensor->data.uint8, static_image.data(), input_tensor->bytes);
+          const ModelProfile &chosen = kAvailableModels[idx];
 
-          bool switch_model = false;
+          // Compute how many inferences the scheduler would allocate
+          const int n_time = static_cast<int>(budget.time_budget_ms / chosen.time_ms);
+          const int n_energy = static_cast<int>(budget.energy_budget_mj / chosen.energy_mj);
+          int n = (n_time < n_energy) ? n_time : n_energy;
+          if (n > kNumTiles)
+            n = kNumTiles;
 
-          // --- INNER LOOP: Inference Execution & UART Polling ---
-          while (!switch_model)
+          printf("Scheduler selected: [%d] %s\r\n", idx, chosen.name);
+          printf("  time/inf=%.2f ms  energy/inf=%.2f mJ  acc=%.1f%%\r\n",
+                 chosen.time_ms, chosen.energy_mj, chosen.accuracy * 100.0f);
+          printf("  -> running %d inference(s) this frame\r\n", n);
+
+          // --- Flash I/O Caching Logic ---
+          if (idx != current_model_idx)
           {
+            printf("  Switching models: Loading %s from LittleFS...\r\n", chosen.file_path);
 
-            // 1. Check UART for input (non-blocking)
-            char ch;
-            int bytes = coralmicro::ConsoleM7::GetSingleton()->Read(&ch, 1);
-            if (bytes == 1)
+            // Record start time of the flash read if you want to benchmark the swap cost later
+            // const uint32_t load_t0 = DWT->CYCCNT;
+
+            if (!LfsReadFile(chosen.file_path, &cached_model_data))
             {
-              coralmicro::ConsoleM7::GetSingleton()->Write(&ch, 1); // Echo character
-
-              if (ch == '1' || ch == '2')
-              {
-                if (ch != active_model_char)
-                {
-                  active_model_char = ch;
-                  switch_model = true; // Trigger the break
-                  printf("\r\nSwitching to model %c...\r\n", active_model_char);
-                }
-                else
-                {
-                  printf("\r\nModel %c is already running.\r\n", active_model_char);
-                }
-              }
+              printf("ERROR: Failed to load %s\r\n", chosen.file_path);
+              continue; // Skip frame if load fails
             }
+            current_model_idx = idx;
+          }
+          else
+          {
+            printf("  Model %s already active in memory. Skipping LittleFS read.\r\n", chosen.name);
+          }
 
-            // Break inner loop to destroy current interpreter and load the new one
-            if (switch_model)
-            {
-              break;
-            }
+          // Pass the dynamically cached buffer into the frame runner
+          RunFrame(chosen, cached_model_data, n, error_reporter, resolver);
 
-            // Run Inference & timing GPIO
-            const uint32_t t_start = DWT->CYCCNT;
-            GpioSet(kUartCts, true);
-            __DSB();
-            __ISB();
-
-            if (interpreter.Invoke() != kTfLiteOk)
-            {
-              printf("ERROR: InferenceTask() failed\r\n");
-              vTaskSuspend(nullptr);
-            }
-
-            GpioSet(kUartCts, false);
-            __DSB();
-            __ISB();
-            const uint32_t t_end = DWT->CYCCNT;
-
-            // Sleep briefly to yield to other tasks
-            vTaskDelay(pdMS_TO_TICKS(10));
-
-#if defined(SystemCoreClock)
-            const double cpu_hz = static_cast<double>(SystemCoreClock);
-#else
-            const double cpu_hz = 800e6;
-#endif
-            const double ms = static_cast<double>(t_end - t_start) / (cpu_hz / 1000.0);
-            printf("invoke_ms=%.3f\r\n", ms);
-
-          } // End of Inner Loop
-        } // End of Scoped Block (interpreter is de-initialized here)
-      } // End of Outer Loop
+          // Brief pause between frames so the serial log is readable
+          vTaskDelay(pdMS_TO_TICKS(500));
+        }
+      }
     }
 
     void Main()
