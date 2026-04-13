@@ -24,8 +24,16 @@ if [ "$DO_BUILD" = true ]; then
     JOBS=$(( (TOTAL_CORES * 3 + 3) / 4 ))
     echo "Running Make with -j$JOBS"
 
+    REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+    cd src
+    
     echo "=== Configuring CMake ==="
-    cmake -B out -S . || { echo "ERROR: CMake configuration failed."; exit 1; }
+    MODEL_PATH_1="${REPO_ROOT}/data/models/coral_target/Grid_A0.25_D02_quant_edgetpu.tflite"
+    MODEL_PATH_2="${REPO_ROOT}/data/models/coral_target/Grid_A0.25_D04_quant_edgetpu.tflite"
+    cmake -B out -S . \
+        -DMODEL_PATH_1="$MODEL_PATH_1" \
+        -DMODEL_PATH_2="$MODEL_PATH_2" \
+        || { echo "ERROR: CMake configuration failed."; exit 1; }
 
     echo "=== Building Project ==="
     make -C out -j"$JOBS" || { echo "ERROR: Make build failed."; exit 1; }
@@ -42,6 +50,7 @@ fi
 
 
 if [ "$DO_FLASH" = true ]; then
+    cd src
     echo "=== Flashing to Board ==="
     
     # Base arguments for flashtool
@@ -53,7 +62,7 @@ if [ "$DO_FLASH" = true ]; then
         FLASHTOOL_ARGS="$FLASHTOOL_ARGS --nodata"
     fi
 
-    python3 ../../../third-party/coralmicro/scripts/flashtool.py $FLASHTOOL_ARGS || { echo "ERROR: Flashing failed."; exit 1; }
+    python3 ../coralmicro/scripts/flashtool.py $FLASHTOOL_ARGS || { echo "ERROR: Flashing failed."; exit 1; }
 else
     echo "=== Skipping Flash (No-Flash Flag Detected) ==="
 fi
