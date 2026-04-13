@@ -20,7 +20,7 @@ constexpr int kNumModels = sizeof(kAvailableModels) / sizeof(kAvailableModels[0]
 constexpr FrameBudget kSimulationScenario[] = {
     // msec      mJ
     // scheduler should pick Grid A1.25 D06 (highest accuracy that fits)
-    {6680.0f, 6680.0f}, // 20 of each per tile for 4k/224 res/dim
+    {10000.0f, 10000.0f}, // 20 of each per tile for 4k/224 res/dim
 
     // scheduler should pick Grid A0.50 D02
     {3674.0f, 3006.0f}, // 11 per, 9 per

@@ -36,13 +36,13 @@ namespace coralmicro
     // Returns the total accumulated inference time.
     // ------------------------------------------------------------------
     float RunFrame(const ModelProfile &profile,
-                   const std::vector<uint8_t> &model_data,
-                   int n_inferences,
-                   tflite::MicroErrorReporter &error_reporter,
-                   tflite::MicroMutableOpResolver<3> &resolver)
+                  const std::vector<uint8_t> &model_data,
+                  int n_inferences,
+                  tflite::MicroErrorReporter &error_reporter,
+                  tflite::MicroMutableOpResolver<3> &resolver)
     {
       printf("\r\n--- Frame: model=%s  n=%d ---\r\n",
-             profile.name, n_inferences);
+            profile.name, n_inferences);
 
       // Scoped interpreter — freed on exit so tensor arena can be cleanly reused
       {
@@ -83,7 +83,7 @@ namespace coralmicro
           }
 
           const uint32_t t1 = DWT->CYCCNT;
-          GpioSet(kUartCts, false);
+          GpioSet(kUartRts, false);
           __DSB();
           __ISB();
 
@@ -110,11 +110,13 @@ namespace coralmicro
       LedSet(Led::kStatus, true);
       printf("Starting RADMA Inference Task\r\n");
       printf("  %d models available,  %d tiles/frame\r\n",
-             kNumModels, kNumTiles);
+            kNumModels, kNumTiles);
 
       // GPIO for external timing probe
       GpioSetMode(kUartCts, GpioMode::kOutput);
       GpioSet(kUartCts, false);
+      GpioSetMode(kUartRts, GpioMode::kOutput);
+      GpioSet(kUartRts, false);
       __DSB();
       __ISB();
 
@@ -142,9 +144,7 @@ namespace coralmicro
       std::vector<uint8_t> cached_model_data;
       int current_model_idx = -1;
 
-      // ----------------------------------------------------------------
-      // Main demo loop — cycle through the simulation scenario table
-      // ----------------------------------------------------------------
+
       for (;;)
       {
         for (int frame = 0; frame < kNumFrames; ++frame)
@@ -153,9 +153,10 @@ namespace coralmicro
 
           printf("\r\n========================================\r\n");
           printf("Frame %d  budget: time=%.1f ms  energy=%.1f mJ\r\n",
-                 frame, budget.time_budget_ms, budget.energy_budget_mj);
+                frame, budget.time_budget_ms, budget.energy_budget_mj);
 
-          // Ask the scheduler which model maximises correct inferences
+          GpioSet(kUartCts, true);
+          // The SCHEDULER!!
           const int idx = RadmaScheduler::SelectOptimalModel(
               budget, kAvailableModels, kNumModels);
 
@@ -198,6 +199,7 @@ namespace coralmicro
           {
             printf("  Model %s already active in memory. Skipping LittleFS read.\r\n", chosen.name);
           }
+          GpioSet(kUartRts, false);
 
           // Pass the dynamically cached buffer into the frame runner
           RunFrame(chosen, cached_model_data, n, error_reporter, resolver);
