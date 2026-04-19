@@ -1,4 +1,4 @@
-#pragma once
+pragma once
 #include <cmath>
 #include "radma_types.h"
 #include "sensor_configs.h"
@@ -27,4 +27,4 @@ constexpr FrameBudget kSimulationScenario[] = {
 };
 constexpr int kNumFrames = sizeof(kSimulationScenario) / sizeof(kSimulationScenario[0]);
 
-const int kNumTiles = floor(kSensorWidth * kSensorWidth / kModelInputWidth * kModelInputWidth);
+const int kNumTiles = floor(kSensorWi dth * kSensorWidth / kModelInputWidth * kModelInputWidth);
