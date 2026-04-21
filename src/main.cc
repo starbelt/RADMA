@@ -83,7 +83,7 @@ namespace coralmicro
           }
 
           const uint32_t t1 = DWT->CYCCNT;
-          GpioSet(kUartRts, false);
+          GpioSet(kUartCts, false);
           __DSB();
           __ISB();
 
@@ -155,7 +155,7 @@ namespace coralmicro
           printf("Frame %d  budget: time=%.1f ms  energy=%.1f mJ\r\n",
                 frame, budget.time_budget_ms, budget.energy_budget_mj);
 
-          GpioSet(kUartCts, true);
+          GpioSet(kUartRts, true);
           // The SCHEDULER!!
           const int idx = RadmaScheduler::SelectOptimalModel(
               budget, kAvailableModels, kNumModels);

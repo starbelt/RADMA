@@ -1,3 +1,5 @@
+## selection_case_studies.py
+
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -483,6 +485,14 @@ class ContinuousSatSim:
                             plot_fastest_baseline=True,
                             plot_cheapest_baseline=True
         )
+
+        plot_cumulative_yield(logs, naive_states, case_name, self.output_dir,
+                            plot_accuracy_baseline=True,
+                            plot_fastest_baseline=True,
+                            plot_cheapest_baseline=True
+        )
+
+
         ## Some one-off plots for motivation and whatnot :)
         # plot_naive_blitz(logs, naive_states, case_name, cfg, self.output_dir)
         #plot_single(logs, case_name, self.output_dir)
@@ -500,6 +510,30 @@ class ContinuousSatSim:
         print(f"\n{'='*60}")
         print(f"case report: {case_name}")
         print(f"{'='*60}")
+
+        min_alt = sim_data['Alt (km)'].min()
+        max_alt = sim_data['Alt (km)'].max()
+        
+        min_spd = sim_data['v_ground_km_s'].min()
+        max_spd = sim_data['v_ground_km_s'].max()
+        
+        # Calculate swath (km) = Altitude (km) * Sensor Width (mm) / Focal Length (mm)
+        focal_length = cfg.get('focal_length_mm', 85.0) # Fallback to 85mm if missing
+        sensor_width_mm = cfg['sensor_res'] * (cfg['pixel_pitch_um'] / 1000.0)
+        min_swath = min_alt * (sensor_width_mm / focal_length)
+        max_swath = max_alt * (sensor_width_mm / focal_length)
+        
+        # Use logged demand to account for any dynamic event injections
+        max_demand_ips = max(logs['demand_infs']) if logs['demand_infs'] else 0.0
+
+        print("orbital & system parameters:")
+        print(f"  * altitude range:          {min_alt:.2f} km - {max_alt:.2f} km")
+        print(f"  * ground track speed:      {min_spd:.2f} km/s - {max_spd:.2f} km/s")
+        print(f"  * sensor swath range:      {min_swath:.2f} km - {max_swath:.2f} km")
+        print(f"  * max active demand:       {max_demand_ips:.1f} inf/sec")
+        print(f"  * hard limit inf/sec:      {cfg.get('hard_min_infs', 0.0):.1f} inf/sec")
+        print(f"  * hard limit inf/joule:    {cfg.get('hard_min_infj', 0.0):.1f} inf/joule")
+        print("-" * 60)
         
         best_throughput = self.models.loc[self.models['correct_infs_per_sec'].idxmax()]
         best_efficiency = self.models.loc[self.models['correct_infs_per_joule'].idxmax()]
