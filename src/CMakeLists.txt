@@ -17,7 +17,8 @@ include_directories(libs)
 add_subdirectory(../coralmicro coralmicro_build)
 
 add_executable_m7(coralmicro-app
-        main.cc
+        # main.cc
+        model_swaps.cc
         libs/radma_scheduler.cc
         DATA
         # Alpha = 0.25

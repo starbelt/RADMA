@@ -27,4 +27,4 @@ constexpr FrameBudget kSimulationScenario[] = {
 };
 constexpr int kNumFrames = sizeof(kSimulationScenario) / sizeof(kSimulationScenario[0]);
 
-const int kNumTiles = floor(kSensorWidth * kSensorWidth / kModelInputWidth * kModelInputWidth);
+const int kNumTiles = floor(kSensorWidth * kSensorWidth / (kModelInputWidth * kModelInputWidth));
