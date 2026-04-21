@@ -4,19 +4,33 @@
 set -e
 
 # Default states
+DO_HELP=false
 DO_BUILD=true
 DO_FLASH=true
 DO_DATA=true
 
+
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
+        -h | --help) DO_HELP=true; DO_BUILD=false; DO_FLASH=false; shift;;
         -nb|--no-build) DO_BUILD=false; shift ;;
         -nf|--no-flash) DO_FLASH=false; shift ;;
         -nd|--no-data)  DO_DATA=false; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
+
+
+if [ "$DO_HELP" = true ]; then
+    echo "=== flashtool.sh ==="
+    echo "Builds CoralMicro Apps and Flashes Connected Compatible Board"
+    echo " -h  | --help: usage help"
+    echo " -nb | --no-build: flash connected board without building"
+    echo " -nb | --no-flash: build application without flashing"
+    exit
+fi
+
 
 if [ "$DO_BUILD" = true ]; then
     echo "=== Calculating Build Jobs ==="

@@ -1,6 +1,4 @@
 #!/bin/bash
-
-# Define colors for pretty output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
@@ -34,7 +32,7 @@ source coraldev/bin/activate
 echo "Virtual environment activated."
 
 # ==========================================
-# 2. SUBMODULES & HARDWARE LIBS
+# SUBMODULES & HARDWARE LIBS
 # ==========================================
 echo -e "${GREEN}--- Checking Submodules ---${NC}"
 git submodule update --init --recursive
