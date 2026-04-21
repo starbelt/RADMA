@@ -26,6 +26,10 @@ namespace coralmicro
     constexpr int kTensorArenaSize = 8 * 1024 * 1024;
     STATIC_TENSOR_ARENA_IN_SDRAM(tensor_arena, kTensorArenaSize);
 
+    // Model arena (preallocated in SDRAM) to avoid FreeRTOS heap memory fragmentation
+    constexpr int kModelArenaSize = 16 * 1024 * 1024;
+    STATIC_TENSOR_ARENA_IN_SDRAM(model_arena, kModelArenaSize);
+
     TaskHandle_t h = nullptr;
 
     // ------------------------------------------------------------------
@@ -67,8 +71,6 @@ namespace coralmicro
       resolver.AddDetectionPostprocess();
       resolver.AddCustom(kCustomOp, RegisterCustomOp());
 
-      std::vector<uint8_t> cached_model_data;
-
       for (;;)
       {
         for (int idx = 0; idx < kNumModels; ++idx)
@@ -81,7 +83,16 @@ namespace coralmicro
           // Mark RTS high while loading the file from flash (model swap)
           GpioSet(kUartRts, true);
           printf("  Loading %s from LittleFS...\r\n", chosen.file_path);
-          if (!LfsReadFile(chosen.file_path, &cached_model_data))
+
+          // The coralmicro EdgeTpuManager caches the compiled TPU execution package using the raw pointer as a key.
+          // If we pass the exact same pointer for different models, it will mistakenly use the wrong model's cached graph and crash.
+          // By offsetting the pointer uniquely per model index, we defeat the cache aliasing.
+          // We also prevent memory leaks by guaranteeing the same pointer for the same model string across infinite loop repeats.
+          uint8_t* current_model_ptr = model_arena + (idx * 64);
+          size_t max_available_size = kModelArenaSize - (idx * 64);
+
+          size_t loaded_size = LfsReadFile(chosen.file_path, current_model_ptr, max_available_size);
+          if (loaded_size == 0)
           {
             printf("  ERROR: Failed to load %s\r\n", chosen.file_path);
             GpioSet(kUartRts, false);
@@ -93,7 +104,7 @@ namespace coralmicro
           {
             // Scoped interpreter — freed on exit so tensor arena can be cleanly reused
             tflite::MicroInterpreter interpreter(
-                tflite::GetModel(cached_model_data.data()), resolver,
+                tflite::GetModel(current_model_ptr), resolver,
                 tensor_arena, kTensorArenaSize, &error_reporter);
 
             if (interpreter.AllocateTensors() != kTfLiteOk)
@@ -126,7 +137,7 @@ namespace coralmicro
           printf("  Completed 30 inferences for %s. Asserting RTS for 10s...\r\n", chosen.name);
           // Mark RTS high for 10 seconds (super long "done" signal)
           GpioSet(kUartRts, true);
-          vTaskDelay(pdMS_TO_TICKS(10000));
+          vTaskDelay(pdMS_TO_TICKS(1000));
           GpioSet(kUartRts, false);
           printf("  Done asserting RTS.\r\n");
         }
