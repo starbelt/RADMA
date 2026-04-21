@@ -9,3 +9,6 @@ out
 .idea
 cmake-build-debug
 __pycache__
+
+
+tests/build_test
