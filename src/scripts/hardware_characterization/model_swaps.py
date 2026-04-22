@@ -39,8 +39,13 @@ RUN_CONFIG = {
     "A150_2": {"alpha_key": "A150", "depths": ["08", "10", "12"]},
 }
 
-def plot_switching_metrics(json_file="model_switching_results.json", filename="switching_metrics.png", output_dir=".", show_values=True):
-
+def plot_switching_metrics(
+    switching_json="model_switching_results.json", 
+    inference_json="src/data/modeldata/compiled_characterization.json", 
+    filename="switching_factors_prod.pdf", 
+    output_dir=".", 
+    show_values=True
+):
     # Enforce global serif font layout for native LaTeX integration
     plt.rcParams.update({
         "font.family": "serif",
@@ -48,58 +53,82 @@ def plot_switching_metrics(json_file="model_switching_results.json", filename="s
         "mathtext.fontset": "stix"
     })
 
-    # Load JSON data
-    with open(json_file, 'r') as f:
-        data = json.load(f)
+    # 1. Load both JSON datasets
+    with open(switching_json, 'r') as f:
+        switching_data = json.load(f)
+        
+    with open(inference_json, 'r') as f:
+        inference_list = json.load(f)
 
-    if not data:
-        print("JSON data is empty.")
+    if not switching_data or not inference_list:
+        print("One or more JSON files are empty or missing.")
         return
 
-    # Extract and sort Alphas numerically (e.g., 'A25' -> 25)
-    alphas = sorted(list(data.keys()), key=lambda x: int(x.replace('A', '')))
-    
-    # Extract and sort Depths
-    sample_alpha = data[alphas[0]]
+    # 2. Build a quick lookup dictionary for inference times
+    # Maps "Grid A1.0 D02" -> 12.232
+    inference_lookup = {}
+    for item in inference_list:
+        if "Grid" in item.get("Model name", ""):
+            inference_lookup[item["Model name"]] = item.get("Measured Inference Time (ms)", 0)
+
+    # 3. Extract and sort Alphas and Depths
+    alphas = sorted(list(switching_data.keys()), key=lambda x: int(x.replace('A', '')))
+    sample_alpha = switching_data[alphas[0]]
     depth_keys = sorted(list(sample_alpha.keys()), key=lambda x: int(x.split('_')[1]))
     depths = [d.split('_')[1] for d in depth_keys]
 
     x = np.arange(len(alphas))  
-    
-    # Shrink the whitespace between groups by making the bars wider
     group_width = 0.9 
     width = group_width / len(depths)   
 
     cmap = plt.get_cmap('magma_r') 
     colors = cmap(np.linspace(0.2, 0.8, len(depths)))
 
-    # Sized for a single-column paper layout (approx 3.5 inches wide)
+    # Sized for a single-column paper layout
     fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(3.5, 3.5), gridspec_kw={'hspace': 0.15})
 
-    def plot_group_row(ax_idx, metric_key, ylabel, ylim_top=None):
+    def plot_group_row(ax_idx, metric_type, ylabel, ylim_top=None):
         ax = axes[ax_idx]
         max_height = 0
         
         for i, depth_key in enumerate(depth_keys):
             heights = []
             for alpha in alphas:
-                val = data.get(alpha, {}).get(depth_key, {}).get(metric_key, 0)
+                # Get switching time
+                sw_time_s = switching_data.get(alpha, {}).get(depth_key, {}).get("switching_time_s", 0)
+                
+                if metric_type == "time":
+                    val = sw_time_s
+                elif metric_type == "factor":
+                    # Reconstruct the string: 'A100' -> 1.0, 'depth_02' -> 'D02'
+                    alpha_num = int(alpha.replace('A', '')) / 100.0
+                    alpha_str = str(alpha_num) # e.g., 1.0, 0.25, 1.5
+                    depth_str = depth_key.replace('depth_', 'D')
+                    model_name = f"Grid A{alpha_str} {depth_str}"
+                    
+                    inf_time_ms = inference_lookup.get(model_name, 0)
+                    
+                    # Factor = (Switching time in ms) / (Inference time in ms)
+                    if inf_time_ms > 0 and sw_time_s > 0:
+                        val = (sw_time_s * 1000) / inf_time_ms
+                    else:
+                        val = 0
+                
                 heights.append(val)
             
-            # Track the maximum height in this row for dynamic Y-axis scaling
             max_height = max(max_height, max(heights) if heights else 0)
-            
             offset = (i - len(depths)/2) * width + width/2
             
-            # Only add labels to the top plot for the legend
             label = f'Depth {depths[i]}' if ax_idx == 0 else ""
             ax.bar(x + offset, heights, width, label=label, color=colors[i], edgecolor='#333333', linewidth=0.5)
             
             if show_values:
                 for j, h in enumerate(heights):
                     if h > 0:
-                        # 90 deg rotation so they fit in the tight horizontal space
-                        ax.text(x[j] + offset, h * 1.05, f"{h:.1f}", 
+                        # For the factor, showing whole integers looks cleaner. 
+                        # If plotting time, 2 decimal places is better.
+                        label_fmt = f"{int(h)}" if metric_type == "factor" else f"{h:.2f}"
+                        ax.text(x[j] + offset, h * 1.05, label_fmt, 
                                 ha='center', va='bottom', fontsize=5, rotation=90)
 
         # Paper-ready typography
@@ -112,24 +141,21 @@ def plot_switching_metrics(json_file="model_switching_results.json", filename="s
         if ylim_top: 
             ax.set_ylim(0, ylim_top)
         else: 
-            # Add headroom for the rotated text if values are shown
             headroom = 1.35 if show_values else 1.1
             ax.set_ylim(0, max_height * headroom)
 
-    # Plotting rows
-    plot_group_row(0, "switching_time_s", "Time (s)")
-    
-    # Place legend above the first plot, spread across columns
+    # Plot Top Row: Switching Time (s)
+    plot_group_row(0, "time", "Time (s)")
     axes[0].legend(loc='upper center', bbox_to_anchor=(0.5, 1.25), fontsize=9, ncol=len(depths), frameon=False)
     
-    plot_group_row(1, "energy_J", "Energy (J)")
+    # Plot Bottom Row: Switching Cost Factor (Multiplier)
+    plot_group_row(1, "factor", "Cost Factor (x)")
 
-    # X-axis formatting on the bottom axis
+    # X-axis formatting
     axes[1].set_xticks(x)
-    axes[1].set_xticklabels([f"{float(a.replace('A', ''))/100}" for a in alphas], fontsize=10)
+    axes[1].set_xticklabels([f"{float(a.replace('A', ''))/100:.2f}" for a in alphas], fontsize=10)
     axes[1].set_xlabel(r"Width Multiplier ($\alpha$)", fontsize=11)
 
-    # Ensure pdf extension
     pdf_filename = Path(filename).with_suffix('.pdf')
     output_path = Path(output_dir) / pdf_filename
     
