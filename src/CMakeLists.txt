@@ -21,6 +21,16 @@ add_executable_m7(coralmicro-app
         model_swaps.cc
         libs/radma_scheduler.cc
         DATA
+        # The Usual models
+        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D02_quant_edgetpu.tflite"
+        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D04_quant_edgetpu.tflite"
+        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D02_quant_edgetpu.tflite"
+        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D04_quant_edgetpu.tflite"
+        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D02_quant_edgetpu.tflite"
+        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D04_quant_edgetpu.tflite"
+        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D02_quant_edgetpu.tflite"
+        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D06_quant_edgetpu.tflite"
+
         # Alpha = 0.25
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.25_D02_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.25_D04_quant_edgetpu.tflite"
@@ -29,37 +39,37 @@ add_executable_m7(coralmicro-app
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.25_D10_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.25_D12_quant_edgetpu.tflite"
         # Alpha = 0.5
-        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D02_quant_edgetpu.tflite"
-        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D04_quant_edgetpu.tflite"
+        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D02_quant_edgetpu.tflite"
+        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D04_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D06_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D08_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D10_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.5_D12_quant_edgetpu.tflite"
         # Alpha = 0.75
-        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D02_quant_edgetpu.tflite"
-        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D04_quant_edgetpu.tflite"
+        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D02_quant_edgetpu.tflite"
+        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D04_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D06_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D08_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D10_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A0.75_D12_quant_edgetpu.tflite"
         # Alpha = 1.0
-        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D02_quant_edgetpu.tflite"
-        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D04_quant_edgetpu.tflite"
+        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D02_quant_edgetpu.tflite"
+        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D04_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D06_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D08_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D10_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.0_D12_quant_edgetpu.tflite"
         # Alpha = 1.25
-        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D02_quant_edgetpu.tflite"
+        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D02_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D04_quant_edgetpu.tflite"
-        "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D06_quant_edgetpu.tflite"
+        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D06_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D08_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D10_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.25_D12_quant_edgetpu.tflite"
         # Alpha = 1.5
-        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.5_D02_quant_edgetpu.tflite"
-        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.5_D04_quant_edgetpu.tflite"
-        #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.5_D06_quant_edgetpu.tflite"
+        # "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.5_D02_quant_edgetpu.tflite"
+        # "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.5_D04_quant_edgetpu.tflite"
+        # "${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.5_D06_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.5_D08_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.5_D10_quant_edgetpu.tflite"
         #"${CMAKE_CURRENT_LIST_DIR}/../data/models/coral_target/Grid_A1.5_D12_quant_edgetpu.tflite"
